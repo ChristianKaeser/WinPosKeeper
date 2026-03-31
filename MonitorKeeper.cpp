@@ -530,18 +530,21 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    SetScrollRange(hWnd, SB_VERT, 0, 10000, false);
 
-   NOTIFYICONDATA icon;
+   NOTIFYICONDATA icon = {};
    //
    // create notify icon
    icon.cbSize = sizeof(icon);
    icon.hWnd = hWnd;
    icon.uID = 1;
-   icon.szTip[0] = '\0';
-   icon.uFlags = NIF_ICON|NIF_MESSAGE| NIM_SETVERSION;
+   icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
    icon.uCallbackMessage = WM_USER + 100;
    icon.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
-   icon.uVersion = NOTIFYICON_VERSION_4;
+   lstrcpy(icon.szTip, _T("Monitor Keeper"));
    Shell_NotifyIcon(NIM_ADD, &icon);
+
+   // Activate version 4 callback format (must be a separate call after NIM_ADD)
+   icon.uVersion = NOTIFYICON_VERSION_4;
+   Shell_NotifyIcon(NIM_SETVERSION, &icon);
    
    return TRUE;
 }
@@ -601,20 +604,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		UINT nMsg = LOWORD(lParam);
 		if (nMsg == WM_CONTEXTMENU || nMsg == WM_RBUTTONUP) {
 
-			int x = LOWORD(wParam);
-			int y = HIWORD(wParam);
+			int x = GET_X_LPARAM(wParam);
+			int y = GET_Y_LPARAM(wParam);
 			HMENU menu = GetMenu(hWnd);
 			menu = GetSubMenu(menu, 1);
-			RECT r;
-			NOTIFYICONIDENTIFIER id;
-			id.cbSize = sizeof(id);
-			id.hWnd = hWnd;
-			id.uID = 1;
-			id.guidItem = GUID_NULL;
-			Shell_NotifyIconGetRect(&id, &r);
-			x += r.left;
-			y += r.top;
+			// SetForegroundWindow is required before TrackPopupMenu, otherwise
+			// the menu won't dismiss when clicking outside of it.
+			SetForegroundWindow(hWnd);
 			TrackPopupMenu(menu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON, x, y, 0, hWnd, NULL);
+			PostMessage(hWnd, WM_NULL, 0, 0);
 		}
 		}
 		break;
@@ -676,8 +674,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DESTROY:
 		{
-		// destory our notify icon.
-		NOTIFYICONDATA icon;
+		// destroy our notify icon.
+		NOTIFYICONDATA icon = {};
 		icon.cbSize = sizeof(icon);
 		icon.hWnd = hWnd;
 		icon.uID = 1;
