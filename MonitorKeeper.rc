@@ -52,6 +52,7 @@ BEGIN
         MENUITEM "Show Window...",              IDM_SHOWWINDOW
         MENUITEM SEPARATOR
         MENUITEM "Skip &Single Monitor Restore", IDM_SKIP_SINGLE_MONITOR, CHECKED
+        MENUITEM "Start with &Windows",         IDM_AUTOSTART
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_EXIT
     END

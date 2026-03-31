@@ -39,8 +39,37 @@ WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 UINT WM_TASKBARCREATED = 0;                     // registered message for Explorer restart
 
+#define AUTOSTART_REG_KEY   _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+#define AUTOSTART_VALUE     _T("MonitorKeeper")
 
 void LogMessage(LPCTSTR);
+
+static BOOL IsAutostartEnabled()
+{
+	HKEY hKey;
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+		return FALSE;
+	BOOL exists = (RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
+	RegCloseKey(hKey);
+	return exists;
+}
+
+static void SetAutostart(BOOL enable)
+{
+	HKEY hKey;
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
+		return;
+	if (enable) {
+		TCHAR exePath[MAX_PATH];
+		GetModuleFileName(NULL, exePath, MAX_PATH);
+		RegSetValueEx(hKey, AUTOSTART_VALUE, 0, REG_SZ,
+			reinterpret_cast<const BYTE*>(exePath),
+			(DWORD)((lstrlen(exePath) + 1) * sizeof(TCHAR)));
+	} else {
+		RegDeleteValue(hKey, AUTOSTART_VALUE);
+	}
+	RegCloseKey(hKey);
+}
 
 //
 // Represents a snapshot of the current monitor layout (positions, sizes, device names).
@@ -626,6 +655,13 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
    AddTrayIcon(hWnd);
+
+   // Set initial check state for autostart menu item
+   {
+       HMENU menu = GetMenu(hWnd);
+       menu = GetSubMenu(menu, 1);
+       CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
+   }
    
    return TRUE;
 }
@@ -677,6 +713,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
 						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
+				}
+				break;
+			case IDM_AUTOSTART:
+				{
+					BOOL enabled = IsAutostartEnabled();
+					SetAutostart(!enabled);
+					HMENU menu = GetMenu(hWnd);
+					menu = GetSubMenu(menu, 1);
+					CheckMenuItem(menu, IDM_AUTOSTART, !enabled ? MF_CHECKED : MF_UNCHECKED);
 				}
 				break;
             default:
