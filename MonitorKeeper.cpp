@@ -187,10 +187,9 @@ public:
 #ifdef _DEBUG
 		_LogInfo[0] = '\0';
 #endif
-		_WindowDataLength = 32;
 		_ConfigHash = 0;
 		_NumMonitors = 0;
-		_WindowData = new SavedWindowData[_WindowDataLength];
+		_WindowData.resize(32);
 		_MainWnd = NULL;
 		InChangingState = false;
 
@@ -210,9 +209,7 @@ public:
 		if (_Hook != NULL) UnhookWinEvent(_Hook);
 		_Hook = NULL;
 
-		if (_WindowData != NULL) {
-			delete [] _WindowData;
-		}
+		_WindowData.clear();
 
 		if (_MutexSingleInstance)
 		{
@@ -250,13 +247,11 @@ public:
 	//
 	void TagWindowsUnused()
 	{
-		int i;
-		for (i = 0; i < _WindowDataLength; i++)
+		for (auto& wd : _WindowData)
 		{
-			// don't count to the point we rollover
-			if (_WindowData[i].m_hwnd != NULL && _WindowData[i].m_nUnusedCount < 100)
+			if (wd.m_hwnd != NULL && wd.m_nUnusedCount < 100)
 			{
-				_WindowData[i].m_nUnusedCount++;
+				wd.m_nUnusedCount++;
 			}
 		}
 	}
@@ -266,60 +261,43 @@ public:
 	//
 	void RestoreWindowPositions(UINT64 configHash)
 	{
-		int i;
-		for (i = 0; i < _WindowDataLength; i++)
+		for (auto& wd : _WindowData)
 		{
-			// don't count to the point we rollover
-			if (_WindowData[i].m_hwnd != NULL && _WindowData[i].m_nUnusedCount <= 2)
+			if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2)
 			{
-				_WindowData[i].RestoreWindow(configHash);
+				wd.RestoreWindow(configHash);
 			}
 		}
-
 	}
 
 	//
 	// find slow for the window we found.
 	SavedWindowData*	FindWindowSlot(HWND hwnd)
 	{
-		//
 		// find existing HWND in array
-		int i;
-		for (i = 0; i < _WindowDataLength; i++)
+		for (auto& wd : _WindowData)
 		{
-			if (_WindowData[i].m_hwnd == hwnd) {
-				return &(_WindowData[i]);
+			if (wd.m_hwnd == hwnd) {
+				return &wd;
 			}
 		}
 
-		//
-		// find an unused slot.
-		for (i = 0; i < _WindowDataLength; i++)
+		// find an unused slot
+		for (auto& wd : _WindowData)
 		{
-			if (_WindowData[i].m_hwnd == NULL ||
-				_WindowData[i].m_nUnusedCount > 2) {
-				return &(_WindowData[i]);
+			if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) {
+				return &wd;
 			}
 		}
 
-		//
-		// hmmm, all used, need to reallocate.
-		int oldLength = _WindowDataLength;
-		int newlength = _WindowDataLength + 32;
-		SavedWindowData* newdata = new SavedWindowData[newlength];
-		for (i = 0; i < _WindowDataLength; i++) {
-			newdata[i] = _WindowData[i];
-		}
-		delete[] _WindowData;
-		_WindowData = newdata;
-		_WindowDataLength = newlength;
-
-		return &(_WindowData[oldLength]);
+		// all used, grow the vector
+		size_t oldSize = _WindowData.size();
+		_WindowData.resize(oldSize + 32);
+		return &_WindowData[oldSize];
 	}
 
 	HWINEVENTHOOK		_Hook;
-	SavedWindowData		*_WindowData;
-	int					_WindowDataLength;
+	std::vector<SavedWindowData> _WindowData;
 	UINT64				_ConfigHash;
 	int					_NumMonitors;
 	HWND				_MainWnd;
