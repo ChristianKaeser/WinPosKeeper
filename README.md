@@ -1,33 +1,60 @@
 # MonitorKeeper
-Return windows to their rightful place when changing monitors. 
 
-Author: Garr Godfrey<br>
-License: MIT License<br>
-License Summary: Free but author takes no responsibility.<br>
-//<br>
-<p>
-Monitor Keeper is a simple app that runs as an application on the task bar that will restore windows
-to their original locations when a monitor because available. When a monitor is turned off, or HDMI is unplugged,
-Windows 7 and higher detect that and will rearrange all application windows onto the remaining monitor(s).
-If the monitor is reconnected, the applications stay on the single monitor, requiring the user to
-move them back manually. This application moves them back automatically.
-</p>
-//<br>
-Limitations:<br>
-<ul>
-		<li> Windows are only repositions when the number of monitors INCREASES. There is no way to specify a layout
-			to use on a single monitor, for example (although this would not be a difficult change)</li>
-		<li> Support is limited to 5 monitors. This is arbitrary and done simply to limit the storage for each application.</li>
-		<li> If application is run as a standard user, it cannot move any applications that are running as a privileged user.
-			If you run into this, you can run this program as administrator, perhaps using Task Scheduler to launch it at login.</li>
-		<li> Window position is only saved while application is running. There is no persistent storage of position (say, between reboots)</li>
-		<li> Windows will return to their state when the number of monitors was most recently seen. So, a window may go from minimize to
-			maximized or be a different size once the second (or third) monitor is plugged back in.</li>
-</ul>
-//
-DEMO:<br>
-<p>
-		To quickly test the functionality, go to Display Settings... in windows (right click on desktop), with two monitors, change
- the setting for "Multiple Displays" from "Extend These Displays" to "Duplicate These Displays".  Compare when running Monitor
- Keeper and when not.
- </p>
+Automatically restores window positions when your monitor configuration changes.
+
+**Author:** Garr Godfrey
+**License:** MIT
+
+## What it does
+
+When a monitor is disconnected (power off, HDMI unplugged, display switch), Windows
+moves all windows onto the remaining display(s). When the monitor comes back, MonitorKeeper
+puts every window back where it was.
+
+MonitorKeeper identifies each monitor layout by hashing device names and positions, so it
+handles any configuration change — not just adding/removing monitors.
+
+## Features
+
+- **Automatic save & restore** of window positions per monitor configuration
+- **Persistent storage** — optionally saves positions to disk so they survive reboots
+  (`%APPDATA%\MonitorKeeper\positions.dat`)
+- **Start with Windows** — optional autostart via the system tray menu
+- **Skip single-monitor restore** — avoid shuffling windows when going down to one monitor
+- **DPI-aware** — PerMonitorV2 manifest for correct behavior on mixed-DPI setups
+- **Explorer restart resilient** — tray icon re-creates itself if Explorer crashes
+
+## Usage
+
+MonitorKeeper runs in the system tray. Right-click the tray icon for options:
+
+| Menu item | Description |
+|-----------|-------------|
+| About | Version info |
+| Show Window | Show the debug log window (Debug builds) |
+| Skip Single Monitor Restore | When checked, don't restore positions when going to 1 monitor |
+| Start with Windows | Toggle autostart at login |
+| Persist Positions to Disk | Save/load positions across restarts |
+| Exit | Quit MonitorKeeper |
+
+## Building
+
+Run `build.bat` from a command prompt. It uses `vswhere` to locate your Visual Studio
+installation automatically. Requires Visual Studio 2022 with the C++ desktop workload.
+
+Output: `Release\Win32\MonitorKeeper.exe`
+
+## Quick test
+
+1. Connect two monitors and arrange some windows across both.
+2. Start MonitorKeeper.
+3. In Display Settings, change "Multiple Displays" from "Extend" to "Duplicate".
+4. Change it back to "Extend" — windows should return to their original positions.
+
+## Limitations
+
+- Cannot move windows owned by elevated (administrator) processes when running as a
+  standard user. Use Task Scheduler to launch MonitorKeeper at login as administrator
+  if needed.
+- Windows are restored to the state (position, size, minimized/maximized) last seen for
+  that monitor configuration.

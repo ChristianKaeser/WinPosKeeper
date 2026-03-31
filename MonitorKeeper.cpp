@@ -1,29 +1,29 @@
-// MonitorKeeper.cpp 
+// MonitorKeeper.cpp
 //
-// Author: Garr Godfrey
+// Original author: Garr Godfrey
 // License: MIT License
-// License Summary: Free but author takes no responsibility.
 //
-//  Monitor Keeper is a simple app that runs as an application on the task bar that will restore windows
-// to their original locations when a monitor because available. When a monitor is turned off, or HDMI is unplugged,
-// Windows 7 and higher detect that and will rearrange all application windows onto the remaining monitor(s).
-// If the monitor is reconnected, the applications stay on the single monitor, requiring the user to
-// move them back manually. This application moves them back automatically.
+// Monitor Keeper is a system-tray utility that automatically restores window positions
+// when the monitor configuration changes. When a monitor is disconnected, Windows moves
+// all windows onto the remaining display(s). Monitor Keeper remembers where each window
+// was and puts it back when the monitor returns.
+//
+// Configuration detection uses an FNV-1a hash of all monitor device names and rects,
+// so any layout change (not just monitor count) triggers a save/restore cycle.
+//
+// Features:
+//   - Automatic save/restore of window positions per monitor configuration
+//   - Persistent storage of positions to disk (%APPDATA%\MonitorKeeper\positions.dat)
+//   - Optional "Start with Windows" autostart via registry
+//   - Optional skip of restore when going to a single monitor
+//   - DPI-aware (PerMonitorV2)
+//   - Survives Explorer restarts (re-creates tray icon)
 //
 // Limitations:
-//		- Windows are only repositions when the number of monitors INCREASES. There is no way to specify a layout
-//			to use on a single monitor, for example (although this would not be a difficult change)
-//		- Support is limited to 5 monitors. This is arbitrary and done simply to limit the storage for each application.
-//		- If application is run as a standard user, it cannot move any applications that are running as a privileged user.
-//			If you run into this, you can run this program as administrator, perhaps using Task Scheduler to launch it at login.
-//		- Window position is only saved while application is running. There is no persistent storage of position (say, between reboots)
-//		- Windows will return to their state when the number of monitors was most recently seen. So, a window may go from minimize to
-//			maximized or be a different size once the second (or third) monitor is plugged back in.
-//
-// DEMO:
-//		To quickly test the functionality, go to Display Settings... in windows (right click on desktop), with two monitors, change
-// the setting for "Multiple Displays" from "Extend These Displays" to "Duplicate These Displays".  Compare when running Monitor
-// Keeper and when not.
+//   - Standard-user instance cannot move windows owned by elevated processes.
+//     Run as administrator (e.g. via Task Scheduler) to work around this.
+//   - Windows are restored to the state seen when the matching monitor config was
+//     last active, so a window may change between minimized/maximized/normal.
 
 
 #include "MonitorKeeper.h"
@@ -252,8 +252,7 @@ public:
 	static InstanceData  g_Instance;
 
 	//
-	// there is a primiative log window in debug mode.
-	//
+	// Primitive log window (debug builds only).
 	void LogMessage(LPCTSTR str)
 	{
 #ifdef _DEBUG
@@ -302,7 +301,7 @@ public:
 	}
 
 	//
-	// find slow for the window we found.
+	// Find an existing or available slot for the given window.
 	SavedWindowData*	FindWindowSlot(HWND hwnd)
 	{
 		// find existing HWND in array
