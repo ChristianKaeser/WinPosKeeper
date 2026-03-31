@@ -304,7 +304,7 @@ public:
 
 		//
 		// hmmm, all used, need to reallocate.
-		i = _WindowDataLength;
+		int oldLength = _WindowDataLength;
 		int newlength = _WindowDataLength + 32;
 		SavedWindowData* newdata = new SavedWindowData[newlength];
 		for (i = 0; i < _WindowDataLength; i++) {
@@ -314,8 +314,7 @@ public:
 		_WindowData = newdata;
 		_WindowDataLength = newlength;
 
-		// i === old _WindowDataLength
-		return &(_WindowData[i]);
+		return &(_WindowData[oldLength]);
 	}
 
 	HWINEVENTHOOK		_Hook;
