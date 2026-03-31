@@ -37,6 +37,7 @@
 HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
+UINT WM_TASKBARCREATED = 0;                     // registered message for Explorer restart
 
 
 void LogMessage(LPCTSTR);
@@ -583,6 +584,27 @@ HWINEVENTHOOK HookDisplayChange()
 
 
 //
+// Create or re-create the notification tray icon.
+// Called on startup and whenever Explorer restarts (TaskbarCreated).
+//
+void AddTrayIcon(HWND hWnd)
+{
+   NOTIFYICONDATA icon = {};
+   icon.cbSize = sizeof(icon);
+   icon.hWnd = hWnd;
+   icon.uID = 1;
+   icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+   icon.uCallbackMessage = WM_USER + 100;
+   icon.hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_MONITORKEEPER));
+   lstrcpy(icon.szTip, _T("Monitor Keeper"));
+   Shell_NotifyIcon(NIM_ADD, &icon);
+
+   icon.uVersion = NOTIFYICON_VERSION_4;
+   Shell_NotifyIcon(NIM_SETVERSION, &icon);
+}
+
+
+//
 //   FUNCTION: InitInstance(HINSTANCE, int)
 //
 //   PURPOSE: Saves instance handle and creates main window
@@ -613,21 +635,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    SetScrollRange(hWnd, SB_VERT, 0, 10000, false);
 
-   NOTIFYICONDATA icon = {};
-   //
-   // create notify icon
-   icon.cbSize = sizeof(icon);
-   icon.hWnd = hWnd;
-   icon.uID = 1;
-   icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-   icon.uCallbackMessage = WM_USER + 100;
-   icon.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
-   lstrcpy(icon.szTip, _T("Monitor Keeper"));
-   Shell_NotifyIcon(NIM_ADD, &icon);
+   // Register for Explorer restart notification so we can re-add the tray icon
+   WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
-   // Activate version 4 callback format (must be a separate call after NIM_ADD)
-   icon.uVersion = NOTIFYICON_VERSION_4;
-   Shell_NotifyIcon(NIM_SETVERSION, &icon);
+   AddTrayIcon(hWnd);
    
    return TRUE;
 }
@@ -768,6 +779,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
         break;
     default:
+		if (message == WM_TASKBARCREATED && WM_TASKBARCREATED != 0) {
+			// Explorer restarted — re-add our tray icon
+			LogMessage(_T("TaskbarCreated — re-adding tray icon\n"));
+			AddTrayIcon(hWnd);
+			return 0;
+		}
         return DefWindowProc(hWnd, message, wParam, lParam);
     }
     return 0;
