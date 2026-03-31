@@ -192,6 +192,7 @@ public:
 		_WindowData.resize(32);
 		_MainWnd = NULL;
 		InChangingState = false;
+		SkipSingleMonitorRestore = true;
 
 #define APPLICATION_INSTANCE_MUTEX_NAME L"{f7ef2518-1a96-11ec-9621-0242ac130002}"
 
@@ -302,6 +303,7 @@ public:
 	int					_NumMonitors;
 	HWND				_MainWnd;
 	BOOL				InChangingState;
+	BOOL				SkipSingleMonitorRestore;
 	BOOL				AlreadyRunning;
 	HANDLE				_MutexSingleInstance;
 #ifdef _DEBUG
@@ -473,13 +475,21 @@ void ProcessMonitors()
 	int monitors = GetCurrentMonitorCount();
 	if (newHash != InstanceData::g_Instance._ConfigHash)
 	{
-		TCHAR sz[256];
-		StringCchPrintf(sz, _countof(sz), _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
-			InstanceData::g_Instance._ConfigHash, newHash, monitors);
-		LogMessage(sz);
+		// Optionally skip restore when going to a single monitor
+		if (monitors == 1 && InstanceData::g_Instance.SkipSingleMonitorRestore)
+		{
+			LogMessage(_T("Config changed to single monitor - skipping restore\n"));
+		}
+		else
+		{
+			TCHAR sz[256];
+			StringCchPrintf(sz, _countof(sz), _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
+				InstanceData::g_Instance._ConfigHash, newHash, monitors);
+			LogMessage(sz);
 
-		// restore windows to their saved positions for this config
-		InstanceData::g_Instance.RestoreWindowPositions(newHash);
+			// restore windows to their saved positions for this config
+			InstanceData::g_Instance.RestoreWindowPositions(newHash);
+		}
 	}
 	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
@@ -658,6 +668,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			case IDM_SHOWWINDOW:
 				ShowWindow(hWnd, SW_RESTORE);
 				UpdateWindow(hWnd);
+				break;
+			case IDM_SKIP_SINGLE_MONITOR:
+				{
+					InstanceData::g_Instance.SkipSingleMonitorRestore =
+						!InstanceData::g_Instance.SkipSingleMonitorRestore;
+					HMENU menu = GetMenu(hWnd);
+					menu = GetSubMenu(menu, 1);
+					CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
+						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
+				}
 				break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
