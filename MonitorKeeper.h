@@ -11,3 +11,6 @@
 #include <cguid.h>
 
 #include <tchar.h>
+#include <map>
+#include <vector>
+#include <algorithm>

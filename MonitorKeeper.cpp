@@ -29,8 +29,7 @@
 #include "MonitorKeeper.h"
 
 
-#define MAX_MONITORS 5
-#define MIN_MONITORTORESTORE 2
+#define MAX_CONFIGSLOTS 16
 
 #define LOGBUFFERSIZE  (32*1024)
 #define MAX_LOADSTRING 100
@@ -43,7 +42,70 @@ WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 void LogMessage(LPCTSTR);
 
 //
+// Represents a snapshot of the current monitor layout (positions, sizes, device names).
+// Two MonitorConfigs are "equal" if they have the same hash, which is computed from
+// the sorted list of monitor rects and device names.
+//
+struct MonitorInfo {
+	RECT  rcMonitor;
+	TCHAR szDevice[CCHDEVICENAME];
+};
+
+static BOOL CALLBACK CollectMonitorProc(HMONITOR hMon, HDC, LPRECT, LPARAM lParam)
+{
+	auto* monitors = reinterpret_cast<std::vector<MonitorInfo>*>(lParam);
+	MONITORINFOEX mi = {};
+	mi.cbSize = sizeof(mi);
+	if (GetMonitorInfo(hMon, &mi)) {
+		MonitorInfo info = {};
+		info.rcMonitor = mi.rcMonitor;
+		lstrcpyn(info.szDevice, mi.szDevice, CCHDEVICENAME);
+		monitors->push_back(info);
+	}
+	return TRUE;
+}
+
+//
+// Hash the current monitor configuration into a UINT64.
+// Combines device names, positions and sizes using FNV-1a.
+//
+static UINT64 ComputeMonitorConfigHash()
+{
+	std::vector<MonitorInfo> monitors;
+	EnumDisplayMonitors(NULL, NULL, CollectMonitorProc, reinterpret_cast<LPARAM>(&monitors));
+
+	// Sort by device name for deterministic ordering
+	std::sort(monitors.begin(), monitors.end(), [](const MonitorInfo& a, const MonitorInfo& b) {
+		return lstrcmp(a.szDevice, b.szDevice) < 0;
+	});
+
+	// FNV-1a 64-bit
+	UINT64 hash = 14695981039346656037ULL;
+	auto fnvByte = [&](BYTE b) {
+		hash ^= b;
+		hash *= 1099511628211ULL;
+	};
+	auto fnvData = [&](const void* data, size_t len) {
+		const BYTE* p = static_cast<const BYTE*>(data);
+		for (size_t i = 0; i < len; i++) fnvByte(p[i]);
+	};
+
+	for (const auto& m : monitors) {
+		fnvData(m.szDevice, lstrlen(m.szDevice) * sizeof(TCHAR));
+		fnvData(&m.rcMonitor, sizeof(m.rcMonitor));
+	}
+
+	return hash;
+}
+
+static int GetCurrentMonitorCount()
+{
+	return GetSystemMetrics(SM_CMONITORS);
+}
+
+//
 // class representing the data we save for each top level window.
+// Now stores placements keyed by full monitor configuration hash.
 //
 class SavedWindowData {
 public:
@@ -51,57 +113,62 @@ public:
 		m_wndClass[0] = '\0';
 		m_hwnd = NULL;
 		m_nUnusedCount = 1;
-		ZeroMemory(m_windowPlacement, sizeof(m_windowPlacement));
 	}
 
 	int					m_nUnusedCount;
-	WINDOWPLACEMENT		m_windowPlacement[MAX_MONITORS-MIN_MONITORTORESTORE+1];
+	std::map<UINT64, WINDOWPLACEMENT>  m_placements;  // configHash -> placement
 	HWND				m_hwnd;
 	TCHAR				m_wndClass[40];  // window class, for verification.
 
-	BOOL SetData(HWND hwnd, int NumMonitors)
+	BOOL SetData(HWND hwnd, UINT64 configHash)
 	{
 		m_hwnd = hwnd;
 		m_nUnusedCount = 0;
 		RealGetWindowClass(hwnd, m_wndClass, sizeof(m_wndClass) / sizeof(TCHAR));
 
-		if (NumMonitors < MIN_MONITORTORESTORE || NumMonitors > MAX_MONITORS) return false;  // too many monitors or not enought
-		m_windowPlacement[NumMonitors - MIN_MONITORTORESTORE].length = sizeof(WINDOWPLACEMENT);
-		GetWindowPlacement(hwnd, &(m_windowPlacement[NumMonitors- MIN_MONITORTORESTORE]));
-		return true;
+		WINDOWPLACEMENT wp = {};
+		wp.length = sizeof(WINDOWPLACEMENT);
+		if (!GetWindowPlacement(hwnd, &wp)) return FALSE;
+
+		m_placements[configHash] = wp;
+
+		// Limit stored configs to prevent unbounded growth
+		while (m_placements.size() > MAX_CONFIGSLOTS) {
+			m_placements.erase(m_placements.begin());
+		}
+
+		return TRUE;
 	}
 
-	void RestoreWindow(int NumMonitors)
+	void RestoreWindow(UINT64 configHash)
 	{
 		TCHAR szTempClass[40];
-		if (NumMonitors >= MIN_MONITORTORESTORE && NumMonitors <= MAX_MONITORS) {
-			if (IsWindow(m_hwnd) && 
-				m_windowPlacement[NumMonitors - MIN_MONITORTORESTORE].length == sizeof(WINDOWPLACEMENT)) {
-				// verify window class
-				RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
-				if (lstrcmp(szTempClass, m_wndClass) == 0) {
-					WINDOWPLACEMENT* place = &(m_windowPlacement[NumMonitors - MIN_MONITORTORESTORE]);
+		auto it = m_placements.find(configHash);
+		if (it == m_placements.end()) return;
 
-					if (place->showCmd == SW_MAXIMIZE) {
-						// we need to treat this special, first restore it to the correct position,
-						// then maximize. Otherwise, it will just maximize it on the current screen
-						// and ingore the coordinates.
-						place->showCmd = SW_SHOWNOACTIVATE;
-						SetWindowPlacement(m_hwnd, &(m_windowPlacement[NumMonitors - MIN_MONITORTORESTORE]));
-						place->showCmd = SW_MAXIMIZE;
-					}
-					else if (place->showCmd == SW_MINIMIZE || place->showCmd == SW_SHOWMINIMIZED) {
-						place->showCmd = SW_SHOWMINNOACTIVE;
-					}
-					else if (place->showCmd == SW_NORMAL) {
-						place->showCmd = SW_SHOWNOACTIVATE;
-					}
-					// don't worry about "minimized position", it is a concept from Windows 3.0.
-					place->flags &= ~WPF_SETMINPOSITION;
-					place->flags |= WPF_ASYNCWINDOWPLACEMENT;
+		if (IsWindow(m_hwnd) && it->second.length == sizeof(WINDOWPLACEMENT)) {
+			// verify window class hasn't changed (HWND reuse)
+			RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
+			if (lstrcmp(szTempClass, m_wndClass) == 0) {
+				WINDOWPLACEMENT place = it->second;
 
-					SetWindowPlacement(m_hwnd, &(m_windowPlacement[NumMonitors - MIN_MONITORTORESTORE]));
+				if (place.showCmd == SW_MAXIMIZE) {
+					// Restore to correct position first, then maximize.
+					// Otherwise Windows maximizes on the current screen.
+					place.showCmd = SW_SHOWNOACTIVATE;
+					SetWindowPlacement(m_hwnd, &place);
+					place.showCmd = SW_MAXIMIZE;
 				}
+				else if (place.showCmd == SW_MINIMIZE || place.showCmd == SW_SHOWMINIMIZED) {
+					place.showCmd = SW_SHOWMINNOACTIVE;
+				}
+				else if (place.showCmd == SW_NORMAL) {
+					place.showCmd = SW_SHOWNOACTIVATE;
+				}
+				place.flags &= ~WPF_SETMINPOSITION;
+				place.flags |= WPF_ASYNCWINDOWPLACEMENT;
+
+				SetWindowPlacement(m_hwnd, &place);
 			}
 		}
 	}
@@ -120,7 +187,8 @@ public:
 		_LogInfo[0] = '\0';
 #endif
 		_WindowDataLength = 32;
-		_NumMonitors = 1;
+		_ConfigHash = 0;
+		_NumMonitors = 0;
 		_WindowData = new SavedWindowData[_WindowDataLength];
 		_MainWnd = NULL;
 		InChangingState = false;
@@ -195,7 +263,7 @@ public:
 	//
 	// restore all the top level windows
 	//
-	void RestoreWindowPositions(int monitors)
+	void RestoreWindowPositions(UINT64 configHash)
 	{
 		int i;
 		for (i = 0; i < _WindowDataLength; i++)
@@ -203,7 +271,7 @@ public:
 			// don't count to the point we rollover
 			if (_WindowData[i].m_hwnd != NULL && _WindowData[i].m_nUnusedCount <= 2)
 			{
-				_WindowData[i].RestoreWindow(monitors);
+				_WindowData[i].RestoreWindow(configHash);
 			}
 		}
 
@@ -252,6 +320,7 @@ public:
 	HWINEVENTHOOK		_Hook;
 	SavedWindowData		*_WindowData;
 	int					_WindowDataLength;
+	UINT64				_ConfigHash;
 	int					_NumMonitors;
 	HWND				_MainWnd;
 	BOOL				InChangingState;
@@ -378,7 +447,7 @@ BOOL CALLBACK SaveWindowsCallback(
 	_In_ LPARAM lParam
 )
 {
-	int monitors = (int)lParam;
+	UINT64 configHash = InstanceData::g_Instance._ConfigHash;
 
 	//
 	// only track windows that are visible, don't have a parent, 
@@ -398,14 +467,18 @@ BOOL CALLBACK SaveWindowsCallback(
 			(dwExStyle & (WS_EX_NOACTIVATE)) == 0) 
 		{
 			SavedWindowData *pData = InstanceData::g_Instance.FindWindowSlot(hwnd);
-			if (pData->SetData(hwnd, monitors))
+			if (pData->SetData(hwnd, configHash))
 			{
 				TCHAR sz[128];
-				wsprintf(sz, _T("Save Position for %s, monitors %d, x=%d, y=%d, show=%s\n"),
-					pData->m_wndClass, monitors, pData->m_windowPlacement[monitors - MIN_MONITORTORESTORE].rcNormalPosition.left,
-					pData->m_windowPlacement[monitors - MIN_MONITORTORESTORE].rcNormalPosition.top,
-					TranslateShowCommand(pData->m_windowPlacement[monitors - MIN_MONITORTORESTORE].showCmd));
-				LogMessage(sz);
+				auto it = pData->m_placements.find(configHash);
+				if (it != pData->m_placements.end()) {
+					wsprintf(sz, _T("Save %s, cfg=%I64X, x=%d, y=%d, show=%s\n"),
+						pData->m_wndClass, configHash,
+						it->second.rcNormalPosition.left,
+						it->second.rcNormalPosition.top,
+						TranslateShowCommand(it->second.showCmd));
+					LogMessage(sz);
+				}
 			}
 		}
 	}
@@ -413,17 +486,24 @@ BOOL CALLBACK SaveWindowsCallback(
 }
 
 //
-// Process when the number of monitors changes. If we have changed monitor count
-// we attempt to restore /
+// Process when the monitor configuration changes. If the config hash differs
+// from the last known config, attempt to restore saved window positions.
 //
 void ProcessMonitors()
 {
-	int monitors = GetSystemMetrics(SM_CMONITORS);
-	if (monitors > 1 && InstanceData::g_Instance._NumMonitors != monitors)
+	UINT64 newHash = ComputeMonitorConfigHash();
+	int monitors = GetCurrentMonitorCount();
+	if (newHash != InstanceData::g_Instance._ConfigHash)
 	{
-		// restore windows.
-		InstanceData::g_Instance.RestoreWindowPositions(monitors);
+		TCHAR sz[128];
+		wsprintf(sz, _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
+			InstanceData::g_Instance._ConfigHash, newHash, monitors);
+		LogMessage(sz);
+
+		// restore windows to their saved positions for this config
+		InstanceData::g_Instance.RestoreWindowPositions(newHash);
 	}
+	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
 	InstanceData::g_Instance.InChangingState = false;
 }
@@ -435,17 +515,18 @@ void ProcessMonitors()
 void ProcessDesktopWindows()
 {
 	TCHAR sz[128];
-	int monitors = GetSystemMetrics(SM_CMONITORS);
-	if (monitors != InstanceData::g_Instance._NumMonitors)
+	UINT64 currentHash = ComputeMonitorConfigHash();
+	if (currentHash != InstanceData::g_Instance._ConfigHash)
 	{
 		// we haven't completed our switch to change of monitors yet.
 		// so don't save positions until we've repositioned things.
 		return;
 	}
-	wsprintf(sz, _T("Monitors: %d\n"), monitors);
+	wsprintf(sz, _T("Save positions, cfg=%I64X, %d monitors\n"),
+		currentHash, GetCurrentMonitorCount());
 	InstanceData::g_Instance.TagWindowsUnused();
 	InstanceData::g_Instance.LogMessage(sz);
-	EnumDesktopWindows(NULL, SaveWindowsCallback, monitors);
+	EnumDesktopWindows(NULL, SaveWindowsCallback, 0);
 }
 
 
@@ -519,7 +600,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
       CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
    ProcessDesktopWindows();
-   InstanceData::g_Instance._NumMonitors = GetSystemMetrics(SM_CMONITORS);
+   InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
+   InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();
 
    if (!hWnd)
    {
