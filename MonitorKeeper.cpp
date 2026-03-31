@@ -222,6 +222,7 @@ public:
 		_MainWnd = NULL;
 		InChangingState = false;
 		SkipSingleMonitorRestore = true;
+		PersistPositions = false;
 
 #define APPLICATION_INSTANCE_MUTEX_NAME L"{f7ef2518-1a96-11ec-9621-0242ac130002}"
 
@@ -326,6 +327,138 @@ public:
 		return &_WindowData[oldSize];
 	}
 
+	static BOOL GetPersistPath(TCHAR* path, DWORD cch)
+	{
+		if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path)))
+			return FALSE;
+		StringCchCat(path, cch, _T("\\MonitorKeeper"));
+		CreateDirectory(path, NULL);
+		StringCchCat(path, cch, _T("\\positions.dat"));
+		return TRUE;
+	}
+
+	//
+	// File format (binary, little-endian, all fields fixed size):
+	//   DWORD magic = 0x4D4B5031 ("MKP1")
+	//   DWORD entryCount
+	//   For each entry:
+	//     TCHAR wndClass[40]
+	//     DWORD placementCount
+	//     For each placement:
+	//       UINT64 configHash
+	//       WINDOWPLACEMENT wp
+	//
+	void SaveToDisk()
+	{
+		if (!PersistPositions) return;
+
+		TCHAR path[MAX_PATH];
+		if (!GetPersistPath(path, MAX_PATH)) return;
+
+		HANDLE hFile = CreateFile(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hFile == INVALID_HANDLE_VALUE) return;
+
+		DWORD written;
+		DWORD magic = 0x4D4B5031;
+		WriteFile(hFile, &magic, sizeof(magic), &written, NULL);
+
+		// Count entries that have valid data
+		DWORD entryCount = 0;
+		for (const auto& wd : _WindowData) {
+			if (wd.m_wndClass[0] != '\0' && !wd.m_placements.empty())
+				entryCount++;
+		}
+		WriteFile(hFile, &entryCount, sizeof(entryCount), &written, NULL);
+
+		for (const auto& wd : _WindowData) {
+			if (wd.m_wndClass[0] == '\0' || wd.m_placements.empty())
+				continue;
+			WriteFile(hFile, wd.m_wndClass, sizeof(wd.m_wndClass), &written, NULL);
+			DWORD placementCount = (DWORD)wd.m_placements.size();
+			WriteFile(hFile, &placementCount, sizeof(placementCount), &written, NULL);
+			for (const auto& pair : wd.m_placements) {
+				WriteFile(hFile, &pair.first, sizeof(pair.first), &written, NULL);
+				WriteFile(hFile, &pair.second, sizeof(pair.second), &written, NULL);
+			}
+		}
+
+		CloseHandle(hFile);
+	}
+
+	void LoadFromDisk()
+	{
+		TCHAR path[MAX_PATH];
+		if (!GetPersistPath(path, MAX_PATH)) return;
+
+		HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hFile == INVALID_HANDLE_VALUE) return;
+
+		DWORD bytesRead;
+		DWORD magic = 0;
+		if (!ReadFile(hFile, &magic, sizeof(magic), &bytesRead, NULL) || magic != 0x4D4B5031) {
+			CloseHandle(hFile);
+			return;
+		}
+
+		DWORD entryCount = 0;
+		ReadFile(hFile, &entryCount, sizeof(entryCount), &bytesRead, NULL);
+
+		// Sanity cap
+		if (entryCount > 10000) { CloseHandle(hFile); return; }
+
+		for (DWORD e = 0; e < entryCount; e++) {
+			TCHAR wndClass[40];
+			if (!ReadFile(hFile, wndClass, sizeof(wndClass), &bytesRead, NULL) || bytesRead != sizeof(wndClass))
+				break;
+			// Ensure null-terminated
+			wndClass[39] = '\0';
+
+			DWORD placementCount = 0;
+			if (!ReadFile(hFile, &placementCount, sizeof(placementCount), &bytesRead, NULL))
+				break;
+			if (placementCount > MAX_CONFIGSLOTS) break;
+
+			// Find or allocate a slot for this window class
+			SavedWindowData* pData = nullptr;
+			for (auto& wd : _WindowData) {
+				if (lstrcmp(wd.m_wndClass, wndClass) == 0) {
+					pData = &wd;
+					break;
+				}
+			}
+			if (!pData) {
+				for (auto& wd : _WindowData) {
+					if (wd.m_hwnd == NULL && wd.m_wndClass[0] == '\0') {
+						pData = &wd;
+						break;
+					}
+				}
+			}
+			if (!pData) {
+				size_t oldSize = _WindowData.size();
+				_WindowData.resize(oldSize + 32);
+				pData = &_WindowData[oldSize];
+			}
+
+			lstrcpyn(pData->m_wndClass, wndClass, 40);
+
+			for (DWORD p = 0; p < placementCount; p++) {
+				UINT64 configHash;
+				WINDOWPLACEMENT wp;
+				if (!ReadFile(hFile, &configHash, sizeof(configHash), &bytesRead, NULL) || bytesRead != sizeof(configHash))
+					break;
+				if (!ReadFile(hFile, &wp, sizeof(wp), &bytesRead, NULL) || bytesRead != sizeof(wp))
+					break;
+				if (wp.length == sizeof(WINDOWPLACEMENT)) {
+					pData->m_placements[configHash] = wp;
+				}
+			}
+		}
+
+		CloseHandle(hFile);
+		PersistPositions = true;  // If file existed, enable persistence
+	}
+
 	HWINEVENTHOOK		_Hook;
 	std::vector<SavedWindowData> _WindowData;
 	UINT64				_ConfigHash;
@@ -333,6 +466,7 @@ public:
 	HWND				_MainWnd;
 	BOOL				InChangingState;
 	BOOL				SkipSingleMonitorRestore;
+	BOOL				PersistPositions;
 	BOOL				AlreadyRunning;
 	HANDLE				_MutexSingleInstance;
 #ifdef _DEBUG
@@ -544,6 +678,7 @@ void ProcessDesktopWindows()
 	InstanceData::g_Instance.TagWindowsUnused();
 	InstanceData::g_Instance.LogMessage(sz);
 	EnumDesktopWindows(NULL, SaveWindowsCallback, 0);
+	InstanceData::g_Instance.SaveToDisk();
 }
 
 
@@ -637,6 +772,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
       CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
+   // Load persisted positions (if any exist, this also enables PersistPositions)
+   InstanceData::g_Instance.LoadFromDisk();
+
    ProcessDesktopWindows();
    InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
    InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();
@@ -656,11 +794,13 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    AddTrayIcon(hWnd);
 
-   // Set initial check state for autostart menu item
+   // Set initial check states for menu items
    {
        HMENU menu = GetMenu(hWnd);
        menu = GetSubMenu(menu, 1);
        CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
+       CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
+           InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
    }
    
    return TRUE;
@@ -722,6 +862,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					HMENU menu = GetMenu(hWnd);
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_AUTOSTART, !enabled ? MF_CHECKED : MF_UNCHECKED);
+				}
+				break;
+			case IDM_PERSIST_POSITIONS:
+				{
+					InstanceData::g_Instance.PersistPositions =
+						!InstanceData::g_Instance.PersistPositions;
+					HMENU menu = GetMenu(hWnd);
+					menu = GetSubMenu(menu, 1);
+					CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
+						InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
+					if (InstanceData::g_Instance.PersistPositions) {
+						InstanceData::g_Instance.SaveToDisk();
+					}
 				}
 				break;
             default:
@@ -811,6 +964,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DESTROY:
 		{
+		InstanceData::g_Instance.SaveToDisk();
 		// destroy our notify icon.
 		NOTIFYICONDATA icon = {};
 		icon.cbSize = sizeof(icon);
