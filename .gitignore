@@ -35,3 +35,5 @@
 # bulid folders
 Debug/
 Release/
+
+build_log.txt
