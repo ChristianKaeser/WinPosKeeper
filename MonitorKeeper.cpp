@@ -447,10 +447,10 @@ BOOL CALLBACK SaveWindowsCallback(
 			SavedWindowData *pData = InstanceData::g_Instance.FindWindowSlot(hwnd);
 			if (pData->SetData(hwnd, configHash))
 			{
-				TCHAR sz[128];
+				TCHAR sz[256];
 				auto it = pData->m_placements.find(configHash);
 				if (it != pData->m_placements.end()) {
-					wsprintf(sz, _T("Save %s, cfg=%I64X, x=%d, y=%d, show=%s\n"),
+					StringCchPrintf(sz, _countof(sz), _T("Save %s, cfg=%I64X, x=%d, y=%d, show=%s\n"),
 						pData->m_wndClass, configHash,
 						it->second.rcNormalPosition.left,
 						it->second.rcNormalPosition.top,
@@ -473,8 +473,8 @@ void ProcessMonitors()
 	int monitors = GetCurrentMonitorCount();
 	if (newHash != InstanceData::g_Instance._ConfigHash)
 	{
-		TCHAR sz[128];
-		wsprintf(sz, _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
+		TCHAR sz[256];
+		StringCchPrintf(sz, _countof(sz), _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
 			InstanceData::g_Instance._ConfigHash, newHash, monitors);
 		LogMessage(sz);
 
@@ -492,7 +492,7 @@ void ProcessMonitors()
 //
 void ProcessDesktopWindows()
 {
-	TCHAR sz[128];
+	TCHAR sz[256];
 	UINT64 currentHash = ComputeMonitorConfigHash();
 	if (currentHash != InstanceData::g_Instance._ConfigHash)
 	{
@@ -500,7 +500,7 @@ void ProcessDesktopWindows()
 		// so don't save positions until we've repositioned things.
 		return;
 	}
-	wsprintf(sz, _T("Save positions, cfg=%I64X, %d monitors\n"),
+	StringCchPrintf(sz, _countof(sz), _T("Save positions, cfg=%I64X, %d monitors\n"),
 		currentHash, GetCurrentMonitorCount());
 	InstanceData::g_Instance.TagWindowsUnused();
 	InstanceData::g_Instance.LogMessage(sz);
