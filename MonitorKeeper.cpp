@@ -458,8 +458,10 @@ VOID CALLBACK SaveTimerCallback(
 	_In_ DWORD    dwTime
 )
 {
-	ProcessDesktopWindows();
 	KillTimer(hwnd, idEvent);
+	if (!InstanceData::g_Instance.InChangingState) {
+		ProcessDesktopWindows();
+	}
 }
 
 
@@ -470,11 +472,10 @@ VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK hWinEventHook, DWORD dwEvent, H
 {
 	if (InstanceData::g_Instance.InChangingState) return;
 	if (hwnd != NULL &&
-		(dwEvent == EVENT_SYSTEM_MOVESIZEEND ||
-		dwEvent == EVENT_OBJECT_LOCATIONCHANGE))
+		dwEvent == EVENT_OBJECT_LOCATIONCHANGE)
 	{
 		// use our HWND so that this timer get replaced each time we call SetTimer.
-		SetTimer(InstanceData::g_Instance._MainWnd, 2, 200, SaveTimerCallback);
+		SetTimer(InstanceData::g_Instance._MainWnd, 2, 1000, SaveTimerCallback);
 	}
 }
 
@@ -568,6 +569,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
 	case WM_DISPLAYCHANGE:
 		LogMessage(_T("WM_DISPLAYCHANGE\n"));
+		KillTimer(hWnd, 2);  // Cancel any pending save to avoid saving mid-transition positions
 		InstanceData::g_Instance.InChangingState = true;
 		SetTimer(hWnd, 99, 500, TimerCallback);
 		break;
