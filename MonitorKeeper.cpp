@@ -41,6 +41,7 @@ UINT WM_TASKBARCREATED = 0;                     // registered message for Explor
 
 #define AUTOSTART_REG_KEY   _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define AUTOSTART_VALUE     _T("MonitorKeeper")
+#define SETTINGS_REG_KEY    _T("Software\\MonitorKeeper")
 
 void LogMessage(LPCTSTR);
 
@@ -68,6 +69,37 @@ static void SetAutostart(BOOL enable)
 	} else {
 		RegDeleteValue(hKey, AUTOSTART_VALUE);
 	}
+	RegCloseKey(hKey);
+}
+
+static void SaveSettings(BOOL skipSingle, BOOL persistPositions)
+{
+	HKEY hKey;
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
+		REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+		return;
+	DWORD val = skipSingle ? 1 : 0;
+	RegSetValueEx(hKey, _T("SkipSingleMonitor"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	val = persistPositions ? 1 : 0;
+	RegSetValueEx(hKey, _T("PersistPositions"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	RegCloseKey(hKey);
+}
+
+static void LoadSettings(BOOL& skipSingle, BOOL& persistPositions)
+{
+	HKEY hKey;
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+		return;
+	DWORD val, size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("SkipSingleMonitor"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
+		skipSingle = val ? TRUE : FALSE;
+	size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("PersistPositions"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
+		persistPositions = val ? TRUE : FALSE;
 	RegCloseKey(hKey);
 }
 
@@ -771,6 +803,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
       CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
+   // Load user settings from registry
+   LoadSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+                InstanceData::g_Instance.PersistPositions);
+
    // Load persisted positions (if any exist, this also enables PersistPositions)
    InstanceData::g_Instance.LoadFromDisk();
 
@@ -797,6 +833,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    {
        HMENU menu = GetMenu(hWnd);
        menu = GetSubMenu(menu, 1);
+       CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
+           InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
        CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
        CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
            InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
@@ -852,6 +890,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
 						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
+					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+						InstanceData::g_Instance.PersistPositions);
 				}
 				break;
 			case IDM_AUTOSTART:
@@ -871,6 +911,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
 						InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
+					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+						InstanceData::g_Instance.PersistPositions);
 					if (InstanceData::g_Instance.PersistPositions) {
 						InstanceData::g_Instance.SaveToDisk();
 					}
