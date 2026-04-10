@@ -684,6 +684,7 @@ void ProcessMonitors()
 			// restore windows to their saved positions for this config
 			InstanceData::g_Instance.RestoreWindowPositions(newHash);
 		}
+		InstanceData::g_Instance.SaveToDisk();
 	}
 	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
@@ -709,7 +710,6 @@ void ProcessDesktopWindows()
 	InstanceData::g_Instance.TagWindowsUnused();
 	InstanceData::g_Instance.LogMessage(sz);
 	EnumDesktopWindows(NULL, SaveWindowsCallback, 0);
-	InstanceData::g_Instance.SaveToDisk();
 }
 
 
@@ -728,6 +728,22 @@ VOID CALLBACK SaveTimerCallback(
 	}
 }
 
+
+//
+// Periodic timer to flush position data to disk (every 5 minutes).
+//
+#define PERSIST_TIMER_ID     3
+#define PERSIST_TIMER_MS     (2 * 60 * 1000)
+
+VOID CALLBACK PersistTimerCallback(
+	_In_ HWND     hwnd,
+	_In_ UINT     uMsg,
+	_In_ UINT_PTR idEvent,
+	_In_ DWORD    dwTime
+)
+{
+	InstanceData::g_Instance.SaveToDisk();
+}
 
 
 //
@@ -828,6 +844,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
    AddTrayIcon(hWnd);
+
+   // Start periodic disk-save timer
+   SetTimer(hWnd, PERSIST_TIMER_ID, PERSIST_TIMER_MS, PersistTimerCallback);
 
    // Set initial check states for menu items
    {
