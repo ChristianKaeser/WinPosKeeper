@@ -31,7 +31,10 @@
 
 #define MAX_CONFIGSLOTS 16
 
-#define LOGBUFFERSIZE  (32*1024)
+#define MAX_LOG_ENTRIES  500
+#define STATUS_HEIGHT    60
+#define VERIFY_TIMER_ID  4
+#define VERIFY_TIMER_MS  2000
 #define MAX_LOADSTRING 100
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -43,7 +46,9 @@ UINT WM_TASKBARCREATED = 0;                     // registered message for Explor
 #define AUTOSTART_VALUE     _T("MonitorKeeper")
 #define SETTINGS_REG_KEY    _T("Software\\MonitorKeeper")
 
-void LogMessage(LPCTSTR);
+void LogEvent(LPCTSTR, LPCTSTR);
+void UpdateStatusPanel();
+static LPCTSTR TranslateShowCommand(int nShowCmd);
 
 static BOOL IsAutostartEnabled()
 {
@@ -214,6 +219,15 @@ public:
 			if (lstrcmp(szTempClass, m_wndClass) == 0) {
 				WINDOWPLACEMENT place = it->second;
 
+				TCHAR sz[256];
+				StringCchPrintf(sz, _countof(sz), _T("%s -> (%d,%d %dx%d) %s"),
+					m_wndClass,
+					place.rcNormalPosition.left, place.rcNormalPosition.top,
+					place.rcNormalPosition.right - place.rcNormalPosition.left,
+					place.rcNormalPosition.bottom - place.rcNormalPosition.top,
+					TranslateShowCommand(place.showCmd));
+				LogEvent(_T("RESTORE"), sz);
+
 				if (place.showCmd == SW_MAXIMIZE) {
 					// Restore to correct position first, then maximize.
 					// Otherwise Windows maximizes on the current screen.
@@ -245,13 +259,12 @@ class InstanceData {
 public:
 	InstanceData() {
 		_Hook = NULL;
-#ifdef _DEBUG
-		_LogInfo[0] = '\0';
-#endif
 		_ConfigHash = 0;
 		_NumMonitors = 0;
 		_WindowData.resize(32);
 		_MainWnd = NULL;
+		_hStatus = NULL;
+		_hLogList = NULL;
 		InChangingState = false;
 		SkipSingleMonitorRestore = true;
 		PersistPositions = false;
@@ -283,30 +296,6 @@ public:
 
 	static InstanceData  g_Instance;
 
-	//
-	// Primitive log window (debug builds only).
-	void LogMessage(LPCTSTR str)
-	{
-#ifdef _DEBUG
-		int len = lstrlen(_LogInfo);
-		int newlen = lstrlen(str);
-		if (len + newlen >= LOGBUFFERSIZE)
-		{
-			len = 0;
-		}
-		lstrcpy(_LogInfo + len, str);
-		if (_MainWnd != NULL) {
-			SetScrollPos(_MainWnd, SB_VERT, 10000, true);
-			InvalidateRect(_MainWnd, NULL, TRUE);
-		}
-#endif
-	}
-
-	//
-	// we are not notified on a window destroy, so we marked windows
-	// if we haven't seen them. If we don't see it 3 times in a row,
-	// we will reuse it's position in the array.
-	//
 	void TagWindowsUnused()
 	{
 		for (auto& wd : _WindowData)
@@ -495,22 +484,86 @@ public:
 	UINT64				_ConfigHash;
 	int					_NumMonitors;
 	HWND				_MainWnd;
+	HWND				_hStatus;
+	HWND				_hLogList;
 	BOOL				InChangingState;
 	BOOL				SkipSingleMonitorRestore;
 	BOOL				PersistPositions;
 	BOOL				AlreadyRunning;
 	HANDLE				_MutexSingleInstance;
-#ifdef _DEBUG
-	TCHAR				_LogInfo[LOGBUFFERSIZE];
-#endif
 };
 
 
 /*static*/ InstanceData  InstanceData::g_Instance;
 
-void LogMessage(LPCTSTR lpz)
+//
+// Add a timestamped event to the log listbox.
+//
+void LogEvent(LPCTSTR type, LPCTSTR detail)
 {
-	InstanceData::g_Instance.LogMessage(lpz);
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	TCHAR buf[512];
+	StringCchPrintf(buf, _countof(buf), _T("%02d:%02d:%02d [%-7s] %s"),
+		st.wHour, st.wMinute, st.wSecond, type, detail);
+
+	HWND hList = InstanceData::g_Instance._hLogList;
+	if (!hList) return;
+
+	SendMessage(hList, WM_SETREDRAW, FALSE, 0);
+	SendMessage(hList, LB_INSERTSTRING, 0, (LPARAM)buf);
+	while (SendMessage(hList, LB_GETCOUNT, 0, 0) > MAX_LOG_ENTRIES)
+		SendMessage(hList, LB_DELETESTRING, MAX_LOG_ENTRIES, 0);
+	SendMessage(hList, WM_SETREDRAW, TRUE, 0);
+}
+
+//
+// Refresh the status panel text with current state.
+//
+void UpdateStatusPanel()
+{
+	HWND hStatus = InstanceData::g_Instance._hStatus;
+	if (!hStatus) return;
+
+	auto& inst = InstanceData::g_Instance;
+
+	int trackedWindows = 0;
+	int totalPlacements = 0;
+	std::vector<UINT64> configs;
+	for (const auto& wd : inst._WindowData) {
+		if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2)
+			trackedWindows++;
+		for (const auto& p : wd.m_placements) {
+			configs.push_back(p.first);
+			totalPlacements++;
+		}
+	}
+	std::sort(configs.begin(), configs.end());
+	configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
+
+	DWORD fileSize = 0;
+	TCHAR path[MAX_PATH];
+	if (InstanceData::GetPersistPath(path, MAX_PATH)) {
+		HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+			NULL, OPEN_EXISTING, 0, NULL);
+		if (hFile != INVALID_HANDLE_VALUE) {
+			fileSize = GetFileSize(hFile, NULL);
+			CloseHandle(hFile);
+		}
+	}
+
+	TCHAR text[1024];
+	StringCchPrintf(text, _countof(text),
+		_T("Config: 0x%016I64X  |  %d monitor(s)  |  %d tracked windows\r\n")
+		_T("Stored configs: %d  |  Placements: %d  |  Disk: %d KB  |  Persist: %s\r\n")
+		_T("Skip single monitor: %s  |  Autostart: %s"),
+		inst._ConfigHash, inst._NumMonitors, trackedWindows,
+		(int)configs.size(), totalPlacements,
+		fileSize / 1024, inst.PersistPositions ? _T("ON") : _T("OFF"),
+		inst.SkipSingleMonitorRestore ? _T("ON") : _T("OFF"),
+		IsAutostartEnabled() ? _T("ON") : _T("OFF"));
+
+	SetWindowText(hStatus, text);
 }
 
 
@@ -591,7 +644,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 }
 
 
-LPCTSTR TranslateShowCommand(int nShowCmd)
+static LPCTSTR TranslateShowCommand(int nShowCmd)
 {
 	switch (nShowCmd)
 	{
@@ -643,16 +696,8 @@ BOOL CALLBACK SaveWindowsCallback(
 			SavedWindowData *pData = InstanceData::g_Instance.FindWindowSlot(hwnd);
 			if (pData->SetData(hwnd, configHash))
 			{
-				TCHAR sz[256];
-				auto it = pData->m_placements.find(configHash);
-				if (it != pData->m_placements.end()) {
-					StringCchPrintf(sz, _countof(sz), _T("Save %s, cfg=%I64X, x=%d, y=%d, show=%s\n"),
-						pData->m_wndClass, configHash,
-						it->second.rcNormalPosition.left,
-						it->second.rcNormalPosition.top,
-						TranslateShowCommand(it->second.showCmd));
-					LogMessage(sz);
-				}
+				int* pCount = reinterpret_cast<int*>(lParam);
+				if (pCount) (*pCount)++;
 			}
 		}
 	}
@@ -667,28 +712,37 @@ void ProcessMonitors()
 {
 	UINT64 newHash = ComputeMonitorConfigHash();
 	int monitors = GetCurrentMonitorCount();
+	bool didRestore = false;
 	if (newHash != InstanceData::g_Instance._ConfigHash)
 	{
 		// Optionally skip restore when going to a single monitor
 		if (monitors == 1 && InstanceData::g_Instance.SkipSingleMonitorRestore)
 		{
-			LogMessage(_T("Config changed to single monitor - skipping restore\n"));
+			LogEvent(_T("CONFIG"), _T("Changed to single monitor - skipping restore"));
 		}
 		else
 		{
 			TCHAR sz[256];
-			StringCchPrintf(sz, _countof(sz), _T("Config changed: %I64X -> %I64X (%d monitors)\n"),
+			StringCchPrintf(sz, _countof(sz), _T("Config changed: %I64X -> %I64X (%d monitors)"),
 				InstanceData::g_Instance._ConfigHash, newHash, monitors);
-			LogMessage(sz);
+			LogEvent(_T("CONFIG"), sz);
 
 			// restore windows to their saved positions for this config
 			InstanceData::g_Instance.RestoreWindowPositions(newHash);
+			didRestore = true;
 		}
 		InstanceData::g_Instance.SaveToDisk();
 	}
 	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
-	InstanceData::g_Instance.InChangingState = false;
+
+	if (didRestore) {
+		// Defer InChangingState=false until verify timer fires
+		SetTimer(InstanceData::g_Instance._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+	} else {
+		InstanceData::g_Instance.InChangingState = false;
+	}
+	UpdateStatusPanel();
 }
 
 
@@ -697,7 +751,6 @@ void ProcessMonitors()
 //
 void ProcessDesktopWindows()
 {
-	TCHAR sz[256];
 	UINT64 currentHash = ComputeMonitorConfigHash();
 	if (currentHash != InstanceData::g_Instance._ConfigHash)
 	{
@@ -705,11 +758,14 @@ void ProcessDesktopWindows()
 		// so don't save positions until we've repositioned things.
 		return;
 	}
-	StringCchPrintf(sz, _countof(sz), _T("Save positions, cfg=%I64X, %d monitors\n"),
-		currentHash, GetCurrentMonitorCount());
 	InstanceData::g_Instance.TagWindowsUnused();
-	InstanceData::g_Instance.LogMessage(sz);
-	EnumDesktopWindows(NULL, SaveWindowsCallback, 0);
+	int savedCount = 0;
+	EnumDesktopWindows(NULL, SaveWindowsCallback, (LPARAM)&savedCount);
+
+	TCHAR sz[256];
+	StringCchPrintf(sz, _countof(sz), _T("Saved %d window positions (cfg 0x%I64X)"),
+		savedCount, currentHash);
+	LogEvent(_T("SAVE"), sz);
 }
 
 
@@ -816,8 +872,42 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
    hInst = hInstance; // Store instance handle in our global variable
 
+   // Initialize common controls for listbox/etc.
+   INITCOMMONCONTROLSEX icex = {};
+   icex.dwSize = sizeof(icex);
+   icex.dwICC = ICC_STANDARD_CLASSES;
+   InitCommonControlsEx(&icex);
+
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+      CW_USEDEFAULT, 0, 700, 500, nullptr, nullptr, hInstance, nullptr);
+
+   if (!hWnd)
+   {
+      return FALSE;
+   }
+
+   InstanceData::g_Instance._MainWnd = hWnd;
+
+   // Create status panel (static text, 3 lines)
+   InstanceData::g_Instance._hStatus = CreateWindowEx(0, _T("STATIC"), _T(""),
+      WS_CHILD | WS_VISIBLE | SS_LEFT,
+      4, 4, 690, STATUS_HEIGHT,
+      hWnd, NULL, hInstance, NULL);
+
+   // Create event log listbox
+   InstanceData::g_Instance._hLogList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+      WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
+      LBS_NOINTEGRALHEIGHT | LBS_NOSEL | LBS_HASSTRINGS,
+      4, STATUS_HEIGHT + 8, 690, 400,
+      hWnd, NULL, hInstance, NULL);
+
+   // Set a reasonable font
+   HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+   SendMessage(InstanceData::g_Instance._hStatus, WM_SETFONT, (WPARAM)hFont, TRUE);
+   SendMessage(InstanceData::g_Instance._hLogList, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+   // Set horizontal scroll extent for long log lines
+   SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 2000, 0);
 
    // Load user settings from registry
    LoadSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
@@ -830,15 +920,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
    InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();
 
-   if (!hWnd)
-   {
-      return FALSE;
-   }
-
-   InstanceData::g_Instance._MainWnd = hWnd;
    InstanceData::g_Instance._Hook = HookDisplayChange();
-
-   SetScrollRange(hWnd, SB_VERT, 0, 10000, false);
 
    // Register for Explorer restart notification so we can re-add the tray icon
    WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
@@ -858,7 +940,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
        CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
            InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
    }
-   
+
+   UpdateStatusPanel();
+   LogEvent(_T("INFO"), _T("MonitorKeeper started"));
+
    return TRUE;
 }
 
@@ -880,7 +965,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     switch (message)
     {
 	case WM_DISPLAYCHANGE:
-		LogMessage(_T("WM_DISPLAYCHANGE\n"));
+		LogEvent(_T("CONFIG"), _T("WM_DISPLAYCHANGE received"));
 		KillTimer(hWnd, 2);  // Cancel any pending save to avoid saving mid-transition positions
 		InstanceData::g_Instance.InChangingState = true;
 		SetTimer(hWnd, 99, 500, TimerCallback);
@@ -911,6 +996,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
 					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
 						InstanceData::g_Instance.PersistPositions);
+					UpdateStatusPanel();
 				}
 				break;
 			case IDM_AUTOSTART:
@@ -935,6 +1021,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					if (InstanceData::g_Instance.PersistPositions) {
 						InstanceData::g_Instance.SaveToDisk();
 					}
+					UpdateStatusPanel();
 				}
 				break;
             default:
@@ -944,7 +1031,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 	case WM_CLOSE:
 		ShowWindow(hWnd, SW_HIDE);
-		return false;
+		return 0;
 	case (WM_USER+100):
 		// notify icon
 		{
@@ -966,60 +1053,69 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		}
 		break;
-	case WM_VSCROLL: 
+	case WM_SIZE:
 		{
-			UINT cmd = LOWORD(wParam);
-			int pos = GetScrollPos(hWnd, SB_VERT);
-			if (cmd == SB_BOTTOM) {
-				pos = 10000;
+			int cx = LOWORD(lParam);
+			int cy = HIWORD(lParam);
+			if (InstanceData::g_Instance._hStatus)
+				MoveWindow(InstanceData::g_Instance._hStatus, 4, 4, cx - 8, STATUS_HEIGHT, TRUE);
+			if (InstanceData::g_Instance._hLogList)
+				MoveWindow(InstanceData::g_Instance._hLogList, 4, STATUS_HEIGHT + 8, cx - 8, cy - STATUS_HEIGHT - 12, TRUE);
+		}
+		break;
+	case WM_TIMER:
+		if (wParam == VERIFY_TIMER_ID) {
+			KillTimer(hWnd, VERIFY_TIMER_ID);
+			// Verify restored window positions
+			auto& inst = InstanceData::g_Instance;
+			UINT64 configHash = inst._ConfigHash;
+			int warnCount = 0;
+			for (auto& wd : inst._WindowData) {
+				if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) continue;
+				auto it = wd.m_placements.find(configHash);
+				if (it == wd.m_placements.end()) continue;
+				if (!IsWindow(wd.m_hwnd)) continue;
+
+				WINDOWPLACEMENT actual = {};
+				actual.length = sizeof(actual);
+				if (!GetWindowPlacement(wd.m_hwnd, &actual)) continue;
+
+				const RECT& expected = it->second.rcNormalPosition;
+				const RECT& got = actual.rcNormalPosition;
+				int dx = abs(expected.left - got.left);
+				int dy = abs(expected.top - got.top);
+				int dw = abs((expected.right - expected.left) - (got.right - got.left));
+				int dh = abs((expected.bottom - expected.top) - (got.bottom - got.top));
+
+				if (dx > 20 || dy > 20 || dw > 20 || dh > 20) {
+					TCHAR sz[256];
+					StringCchPrintf(sz, _countof(sz),
+						_T("%s: expected (%d,%d %dx%d) got (%d,%d %dx%d)"),
+						wd.m_wndClass,
+						expected.left, expected.top,
+						expected.right - expected.left, expected.bottom - expected.top,
+						got.left, got.top,
+						got.right - got.left, got.bottom - got.top);
+					LogEvent(_T("WARNING"), sz);
+					warnCount++;
+				}
 			}
-			else if (cmd == SB_TOP) {
-				pos += 0;
+			if (warnCount == 0) {
+				LogEvent(_T("VERIFY"), _T("All windows at expected positions"));
+			} else {
+				TCHAR sz[128];
+				StringCchPrintf(sz, _countof(sz), _T("%d window(s) not at expected position"), warnCount);
+				LogEvent(_T("WARNING"), sz);
 			}
-			else if (cmd == SB_PAGEDOWN) {
-				pos += 1000;
-			}
-			else if (cmd == SB_PAGEUP) {
-				pos -= 1000;
-			}
-			else if (cmd == SB_THUMBPOSITION) {
-				pos = HIWORD(wParam);
-			}
-			else if (cmd == SB_THUMBTRACK) {
-				pos = HIWORD(wParam);
-			}
-			else {
-				break;
-			}
-			if (pos < 0) pos = 0;
-			if (pos > 10000) pos = 10000;
-			SetScrollPos(hWnd, SB_VERT, pos, true);
-			InvalidateRect(hWnd, NULL, true);
+			inst.InChangingState = false;
+			UpdateStatusPanel();
 		}
 		break;
     case WM_PAINT:
         {
-#ifdef _DEBUG
             PAINTSTRUCT ps;
-			RECT r,r2;
-            HDC hdc = BeginPaint(hWnd, &ps);
-			GetClientRect(hWnd, &r);
-			r2 = r;
-			DrawText(hdc, InstanceData::g_Instance._LogInfo,
-				-1, &r2, DT_LEFT | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
-			
-			//
-			// get scroll position.
-			//
-			int pos = GetScrollPos(hWnd, SB_VERT);
-			pos = pos * (r2.bottom - r.bottom)/ 10000;
-
-			r.top = r.top - pos;
-			DrawText(hdc, InstanceData::g_Instance._LogInfo,
-				-1, &r, DT_LEFT | DT_NOPREFIX | DT_WORDBREAK);
-
+            BeginPaint(hWnd, &ps);
             EndPaint(hWnd, &ps);
-#endif
         }
         break;
     case WM_DESTROY:
@@ -1037,7 +1133,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     default:
 		if (message == WM_TASKBARCREATED && WM_TASKBARCREATED != 0) {
 			// Explorer restarted — re-add our tray icon
-			LogMessage(_T("TaskbarCreated — re-adding tray icon\n"));
+			LogEvent(_T("INFO"), _T("Explorer restarted - re-adding tray icon"));
 			AddTrayIcon(hWnd);
 			return 0;
 		}

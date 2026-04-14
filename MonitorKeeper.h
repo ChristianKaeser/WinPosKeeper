@@ -11,6 +11,9 @@
 #include <shlobj.h>
 #include <cguid.h>
 
+#include <commctrl.h>
+#pragma comment(lib, "comctl32.lib")
+
 #include <tchar.h>
 #include <strsafe.h>
 #include <map>
