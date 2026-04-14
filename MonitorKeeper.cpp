@@ -32,7 +32,7 @@
 #define MAX_CONFIGSLOTS 16
 
 #define MAX_LOG_ENTRIES  500
-#define STATUS_HEIGHT    60
+#define STATUS_HEIGHT    64
 #define VERIFY_TIMER_ID  4
 #define VERIFY_TIMER_MS  2000
 #define MAX_LOADSTRING 100
@@ -45,10 +45,15 @@ UINT WM_TASKBARCREATED = 0;                     // registered message for Explor
 #define AUTOSTART_REG_KEY   _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define AUTOSTART_VALUE     _T("MonitorKeeper")
 #define SETTINGS_REG_KEY    _T("Software\\MonitorKeeper")
+#define PERSIST_MAGIC_V1    0x4D4B5031
+#define PERSIST_MAGIC_V2    0x4D4B5032
 
 void LogEvent(LPCTSTR, LPCTSTR);
 void UpdateStatusPanel();
+void UpdateLoggingUiState();
 static LPCTSTR TranslateShowCommand(int nShowCmd);
+static void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer);
+static void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchBuffer);
 
 static BOOL IsAutostartEnabled()
 {
@@ -77,7 +82,7 @@ static void SetAutostart(BOOL enable)
 	RegCloseKey(hKey);
 }
 
-static void SaveSettings(BOOL skipSingle, BOOL persistPositions)
+static void SaveSettings(BOOL skipSingle, BOOL persistPositions, BOOL loggingEnabled)
 {
 	HKEY hKey;
 	if (RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
@@ -89,10 +94,13 @@ static void SaveSettings(BOOL skipSingle, BOOL persistPositions)
 	val = persistPositions ? 1 : 0;
 	RegSetValueEx(hKey, _T("PersistPositions"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	val = loggingEnabled ? 1 : 0;
+	RegSetValueEx(hKey, _T("LoggingEnabled"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
 	RegCloseKey(hKey);
 }
 
-static void LoadSettings(BOOL& skipSingle, BOOL& persistPositions)
+static void LoadSettings(BOOL& skipSingle, BOOL& persistPositions, BOOL& loggingEnabled)
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
@@ -105,8 +113,24 @@ static void LoadSettings(BOOL& skipSingle, BOOL& persistPositions)
 	if (RegQueryValueEx(hKey, _T("PersistPositions"), NULL, NULL,
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
 		persistPositions = val ? TRUE : FALSE;
+	size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("LoggingEnabled"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
+		loggingEnabled = val ? TRUE : FALSE;
 	RegCloseKey(hKey);
 }
+
+struct ConfigSnapshotInfo {
+	FILETIME lastSavedUtc;
+	DWORD windowCount;
+
+	ConfigSnapshotInfo()
+	{
+		lastSavedUtc.dwLowDateTime = 0;
+		lastSavedUtc.dwHighDateTime = 0;
+		windowCount = 0;
+	}
+};
 
 //
 // Represents a snapshot of the current monitor layout (positions, sizes, device names).
@@ -207,46 +231,73 @@ public:
 		return TRUE;
 	}
 
-	void RestoreWindow(UINT64 configHash)
+	BOOL HasPlacement(UINT64 configHash) const
+	{
+		return m_placements.find(configHash) != m_placements.end();
+	}
+
+	BOOL RestoreWindow(UINT64 configHash)
 	{
 		TCHAR szTempClass[40];
 		auto it = m_placements.find(configHash);
-		if (it == m_placements.end()) return;
+		if (it == m_placements.end()) return FALSE;
 
-		if (IsWindow(m_hwnd) && it->second.length == sizeof(WINDOWPLACEMENT)) {
-			// verify window class hasn't changed (HWND reuse)
-			RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
-			if (lstrcmp(szTempClass, m_wndClass) == 0) {
-				WINDOWPLACEMENT place = it->second;
-
-				TCHAR sz[256];
-				StringCchPrintf(sz, _countof(sz), _T("%s -> (%d,%d %dx%d) %s"),
-					m_wndClass,
-					place.rcNormalPosition.left, place.rcNormalPosition.top,
-					place.rcNormalPosition.right - place.rcNormalPosition.left,
-					place.rcNormalPosition.bottom - place.rcNormalPosition.top,
-					TranslateShowCommand(place.showCmd));
-				LogEvent(_T("RESTORE"), sz);
-
-				if (place.showCmd == SW_MAXIMIZE) {
-					// Restore to correct position first, then maximize.
-					// Otherwise Windows maximizes on the current screen.
-					place.showCmd = SW_SHOWNOACTIVATE;
-					SetWindowPlacement(m_hwnd, &place);
-					place.showCmd = SW_MAXIMIZE;
-				}
-				else if (place.showCmd == SW_MINIMIZE || place.showCmd == SW_SHOWMINIMIZED) {
-					place.showCmd = SW_SHOWMINNOACTIVE;
-				}
-				else if (place.showCmd == SW_NORMAL) {
-					place.showCmd = SW_SHOWNOACTIVATE;
-				}
-				place.flags &= ~WPF_SETMINPOSITION;
-				place.flags |= WPF_ASYNCWINDOWPLACEMENT;
-
-				SetWindowPlacement(m_hwnd, &place);
-			}
+		if (!IsWindow(m_hwnd)) {
+			TCHAR identity[512];
+			TCHAR message[768];
+			FormatWindowIdentity(NULL, m_wndClass, identity, _countof(identity));
+			StringCchPrintf(message, _countof(message), _T("Skipped restore: %s, saved HWND is no longer valid"), identity);
+			LogEvent(_T("WARNING"), message);
+			return FALSE;
 		}
+
+		if (it->second.length != sizeof(WINDOWPLACEMENT))
+			return FALSE;
+
+		// verify window class hasn't changed (HWND reuse)
+		RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
+		if (lstrcmp(szTempClass, m_wndClass) != 0) {
+			TCHAR identity[512];
+			TCHAR message[768];
+			FormatWindowIdentity(m_hwnd, m_wndClass, identity, _countof(identity));
+			StringCchPrintf(message, _countof(message),
+				_T("Skipped restore: saved class=\"%s\", current class=\"%s\", %s"),
+				m_wndClass, szTempClass, identity);
+			LogEvent(_T("WARNING"), message);
+			return FALSE;
+		}
+
+		WINDOWPLACEMENT place = it->second;
+		TCHAR identity[512];
+		TCHAR message[1024];
+		FormatWindowIdentity(m_hwnd, m_wndClass, identity, _countof(identity));
+		StringCchPrintf(message, _countof(message),
+			_T("%s -> (%d,%d %dx%d) %s"),
+			identity,
+			place.rcNormalPosition.left, place.rcNormalPosition.top,
+			place.rcNormalPosition.right - place.rcNormalPosition.left,
+			place.rcNormalPosition.bottom - place.rcNormalPosition.top,
+			TranslateShowCommand(place.showCmd));
+		LogEvent(_T("RESTORE"), message);
+
+		if (place.showCmd == SW_MAXIMIZE) {
+			// Restore to correct position first, then maximize.
+			// Otherwise Windows maximizes on the current screen.
+			place.showCmd = SW_SHOWNOACTIVATE;
+			SetWindowPlacement(m_hwnd, &place);
+			place.showCmd = SW_MAXIMIZE;
+		}
+		else if (place.showCmd == SW_MINIMIZE || place.showCmd == SW_SHOWMINIMIZED) {
+			place.showCmd = SW_SHOWMINNOACTIVE;
+		}
+		else if (place.showCmd == SW_NORMAL) {
+			place.showCmd = SW_SHOWNOACTIVATE;
+		}
+		place.flags &= ~WPF_SETMINPOSITION;
+		place.flags |= WPF_ASYNCWINDOWPLACEMENT;
+
+		SetWindowPlacement(m_hwnd, &place);
+		return TRUE;
 	}
 };
 
@@ -262,12 +313,19 @@ public:
 		_ConfigHash = 0;
 		_NumMonitors = 0;
 		_WindowData.resize(32);
+		_ConfigSnapshots.clear();
 		_MainWnd = NULL;
 		_hStatus = NULL;
 		_hLogList = NULL;
+		_hLogFont = NULL;
 		InChangingState = false;
 		SkipSingleMonitorRestore = true;
 		PersistPositions = false;
+		LoggingEnabled = true;
+		_LastCaptureUtc.dwLowDateTime = 0;
+		_LastCaptureUtc.dwHighDateTime = 0;
+		_LastPersistUtc.dwLowDateTime = 0;
+		_LastPersistUtc.dwHighDateTime = 0;
 
 #define APPLICATION_INSTANCE_MUTEX_NAME L"{f7ef2518-1a96-11ec-9621-0242ac130002}"
 
@@ -286,6 +344,13 @@ public:
 		_Hook = NULL;
 
 		_WindowData.clear();
+		_ConfigSnapshots.clear();
+
+		if (_hLogFont != NULL)
+		{
+			DeleteObject(_hLogFont);
+			_hLogFont = NULL;
+		}
 
 		if (_MutexSingleInstance)
 		{
@@ -307,18 +372,77 @@ public:
 		}
 	}
 
+	int CountTrackedWindows() const
+	{
+		int trackedWindows = 0;
+		for (const auto& wd : _WindowData)
+		{
+			if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2)
+			{
+				trackedWindows++;
+			}
+		}
+		return trackedWindows;
+	}
+
+	int CountPlacementsForConfig(UINT64 configHash) const
+	{
+		int count = 0;
+		for (const auto& wd : _WindowData)
+		{
+			if (wd.HasPlacement(configHash))
+			{
+				count++;
+			}
+		}
+		return count;
+	}
+
+	BOOL TryGetSnapshotInfo(UINT64 configHash, ConfigSnapshotInfo& info) const
+	{
+		auto it = _ConfigSnapshots.find(configHash);
+		if (it == _ConfigSnapshots.end())
+			return FALSE;
+		info = it->second;
+		return TRUE;
+	}
+
 	//
 	// restore all the top level windows
 	//
-	void RestoreWindowPositions(UINT64 configHash)
+	int RestoreWindowPositions(UINT64 configHash)
 	{
+		ConfigSnapshotInfo info;
+		TCHAR timeText[64];
+		int storedPositions = CountPlacementsForConfig(configHash);
+		int currentWindows = CountTrackedWindows();
+		int attempted = 0;
+
+		if (TryGetSnapshotInfo(configHash, info)) {
+			FormatFileTimeLocal(&info.lastSavedUtc, timeText, _countof(timeText));
+			storedPositions = (int)info.windowCount;
+		}
+		else {
+			StringCchCopy(timeText, _countof(timeText), _T("unknown"));
+		}
+
+		TCHAR summary[512];
+		StringCchPrintf(summary, _countof(summary),
+			_T("Applying config 0x%016I64X captured %s with %d stored positions; currently tracking %d window(s)"),
+			configHash, timeText, storedPositions, currentWindows);
+		LogEvent(_T("RESTORE"), summary);
+
 		for (auto& wd : _WindowData)
 		{
 			if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2)
 			{
-				wd.RestoreWindow(configHash);
+				if (wd.RestoreWindow(configHash)) {
+					attempted++;
+				}
 			}
 		}
+
+		return attempted;
 	}
 
 	//
@@ -359,7 +483,12 @@ public:
 
 	//
 	// File format (binary, little-endian, all fields fixed size):
-	//   DWORD magic = 0x4D4B5031 ("MKP1")
+	//   DWORD magic = 0x4D4B5032 ("MKP2")
+	//   DWORD snapshotCount
+	//   For each snapshot:
+	//     UINT64 configHash
+	//     FILETIME lastSavedUtc
+	//     DWORD windowCount
 	//   DWORD entryCount
 	//   For each entry:
 	//     TCHAR wndClass[40]
@@ -368,19 +497,27 @@ public:
 	//       UINT64 configHash
 	//       WINDOWPLACEMENT wp
 	//
-	void SaveToDisk()
+	BOOL SaveToDisk(LPCTSTR reason)
 	{
-		if (!PersistPositions) return;
+		if (!PersistPositions) return FALSE;
 
 		TCHAR path[MAX_PATH];
-		if (!GetPersistPath(path, MAX_PATH)) return;
+		if (!GetPersistPath(path, MAX_PATH)) return FALSE;
 
 		HANDLE hFile = CreateFile(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile == INVALID_HANDLE_VALUE) return;
+		if (hFile == INVALID_HANDLE_VALUE) return FALSE;
 
 		DWORD written;
-		DWORD magic = 0x4D4B5031;
+		DWORD magic = PERSIST_MAGIC_V2;
 		WriteFile(hFile, &magic, sizeof(magic), &written, NULL);
+
+		DWORD snapshotCount = (DWORD)_ConfigSnapshots.size();
+		WriteFile(hFile, &snapshotCount, sizeof(snapshotCount), &written, NULL);
+		for (const auto& snapshot : _ConfigSnapshots) {
+			WriteFile(hFile, &snapshot.first, sizeof(snapshot.first), &written, NULL);
+			WriteFile(hFile, &snapshot.second.lastSavedUtc, sizeof(snapshot.second.lastSavedUtc), &written, NULL);
+			WriteFile(hFile, &snapshot.second.windowCount, sizeof(snapshot.second.windowCount), &written, NULL);
+		}
 
 		// Count entries that have valid data
 		DWORD entryCount = 0;
@@ -403,6 +540,15 @@ public:
 		}
 
 		CloseHandle(hFile);
+		GetSystemTimeAsFileTime(&_LastPersistUtc);
+
+		TCHAR message[512];
+		StringCchPrintf(message, _countof(message),
+			_T("Persisted %lu window record(s) across %lu config snapshot(s) to disk (%s)"),
+			entryCount, snapshotCount, (reason != NULL) ? reason : _T("unspecified"));
+		LogEvent(_T("DISK"), message);
+		UpdateStatusPanel();
+		return TRUE;
 	}
 
 	void LoadFromDisk()
@@ -413,11 +559,46 @@ public:
 		HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (hFile == INVALID_HANDLE_VALUE) return;
 
+		FILETIME lastWriteUtc = {};
+		GetFileTime(hFile, NULL, NULL, &lastWriteUtc);
+
 		DWORD bytesRead;
 		DWORD magic = 0;
-		if (!ReadFile(hFile, &magic, sizeof(magic), &bytesRead, NULL) || magic != 0x4D4B5031) {
+		if (!ReadFile(hFile, &magic, sizeof(magic), &bytesRead, NULL)) {
 			CloseHandle(hFile);
 			return;
+		}
+		if (magic != PERSIST_MAGIC_V1 && magic != PERSIST_MAGIC_V2) {
+			// Log about the mismatch
+			TCHAR message[512];
+			StringCchPrintf(message, _countof(message),
+				_T("Unrecognized persisted data format on disk (magic=0x%08X)"), magic);
+			LogEvent(_T("DISK"), message);
+			CloseHandle(hFile);
+			return;
+		}
+
+		if (magic == PERSIST_MAGIC_V2) {
+			DWORD snapshotCount = 0;
+			if (!ReadFile(hFile, &snapshotCount, sizeof(snapshotCount), &bytesRead, NULL)) {
+				CloseHandle(hFile);
+				return;
+			}
+			if (snapshotCount > 10000) {
+				CloseHandle(hFile);
+				return;
+			}
+			for (DWORD i = 0; i < snapshotCount; i++) {
+				UINT64 configHash = 0;
+				ConfigSnapshotInfo info;
+				if (!ReadFile(hFile, &configHash, sizeof(configHash), &bytesRead, NULL) || bytesRead != sizeof(configHash))
+					break;
+				if (!ReadFile(hFile, &info.lastSavedUtc, sizeof(info.lastSavedUtc), &bytesRead, NULL) || bytesRead != sizeof(info.lastSavedUtc))
+					break;
+				if (!ReadFile(hFile, &info.windowCount, sizeof(info.windowCount), &bytesRead, NULL) || bytesRead != sizeof(info.windowCount))
+					break;
+				_ConfigSnapshots[configHash] = info;
+			}
 		}
 
 		DWORD entryCount = 0;
@@ -476,21 +657,33 @@ public:
 		}
 
 		CloseHandle(hFile);
+		_LastPersistUtc = lastWriteUtc;
 		PersistPositions = true;  // If file existed, enable persistence
+
+		TCHAR message[256];
+		StringCchPrintf(message, _countof(message),
+			_T("Loaded persisted data from disk (%lu window record(s))"),
+			entryCount);
+		LogEvent(_T("DISK"), message);
 	}
 
 	HWINEVENTHOOK		_Hook;
+	std::map<UINT64, ConfigSnapshotInfo> _ConfigSnapshots;
 	std::vector<SavedWindowData> _WindowData;
 	UINT64				_ConfigHash;
 	int					_NumMonitors;
 	HWND				_MainWnd;
 	HWND				_hStatus;
 	HWND				_hLogList;
+	HFONT				_hLogFont;
 	BOOL				InChangingState;
 	BOOL				SkipSingleMonitorRestore;
 	BOOL				PersistPositions;
+	BOOL				LoggingEnabled;
 	BOOL				AlreadyRunning;
 	HANDLE				_MutexSingleInstance;
+	FILETIME			_LastCaptureUtc;
+	FILETIME			_LastPersistUtc;
 };
 
 
@@ -501,9 +694,12 @@ public:
 //
 void LogEvent(LPCTSTR type, LPCTSTR detail)
 {
+	if (!InstanceData::g_Instance.LoggingEnabled)
+		return;
+
 	SYSTEMTIME st;
 	GetLocalTime(&st);
-	TCHAR buf[512];
+	TCHAR buf[1024];
 	StringCchPrintf(buf, _countof(buf), _T("%02d:%02d:%02d [%-7s] %s"),
 		st.wHour, st.wMinute, st.wSecond, type, detail);
 
@@ -515,6 +711,72 @@ void LogEvent(LPCTSTR type, LPCTSTR detail)
 	while (SendMessage(hList, LB_GETCOUNT, 0, 0) > MAX_LOG_ENTRIES)
 		SendMessage(hList, LB_DELETESTRING, MAX_LOG_ENTRIES, 0);
 	SendMessage(hList, WM_SETREDRAW, TRUE, 0);
+	InvalidateRect(hList, NULL, TRUE);
+}
+
+void UpdateLoggingUiState()
+{
+	if (InstanceData::g_Instance._hLogList != NULL) {
+		EnableWindow(InstanceData::g_Instance._hLogList, InstanceData::g_Instance.LoggingEnabled);
+	}
+}
+
+static void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchBuffer)
+{
+	if (fileTimeUtc == NULL || (fileTimeUtc->dwLowDateTime == 0 && fileTimeUtc->dwHighDateTime == 0)) {
+		StringCchCopy(buffer, cchBuffer, _T("never"));
+		return;
+	}
+
+	FILETIME localTime = {};
+	SYSTEMTIME st = {};
+	if (FileTimeToLocalFileTime(fileTimeUtc, &localTime) && FileTimeToSystemTime(&localTime, &st)) {
+		StringCchPrintf(buffer, cchBuffer, _T("%02d:%02d:%02d"), st.wHour, st.wMinute, st.wSecond);
+	}
+	else {
+		StringCchCopy(buffer, cchBuffer, _T("unknown"));
+	}
+}
+
+static void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer)
+{
+	TCHAR className[256] = _T("");
+	TCHAR title[256] = _T("");
+	TCHAR exePath[MAX_PATH] = _T("<unknown>");
+	DWORD processId = 0;
+
+	if (hwnd != NULL && IsWindow(hwnd)) {
+		RealGetWindowClass(hwnd, className, _countof(className));
+		GetWindowText(hwnd, title, _countof(title));
+		GetWindowThreadProcessId(hwnd, &processId);
+		if (processId != 0) {
+			HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+			if (hProcess != NULL) {
+				DWORD cch = _countof(exePath);
+				if (!QueryFullProcessImageName(hProcess, 0, exePath, &cch)) {
+					StringCchCopy(exePath, _countof(exePath), _T("<access denied>"));
+				}
+				CloseHandle(hProcess);
+			}
+			else {
+				StringCchCopy(exePath, _countof(exePath), _T("<access denied>"));
+			}
+		}
+	}
+
+	if (className[0] == '\0' && fallbackClass != NULL) {
+		StringCchCopy(className, _countof(className), fallbackClass);
+	}
+	if (title[0] == '\0') {
+		StringCchCopy(title, _countof(title), _T("<untitled>"));
+	}
+
+	StringCchPrintf(buffer, cchBuffer,
+		_T("class=\"%s\" pid=%lu title=\"%s\" exe=\"%s\""),
+		className[0] ? className : _T("<unknown>"),
+		processId,
+		title,
+		exePath);
 }
 
 //
@@ -527,12 +789,10 @@ void UpdateStatusPanel()
 
 	auto& inst = InstanceData::g_Instance;
 
-	int trackedWindows = 0;
+	int trackedWindows = inst.CountTrackedWindows();
 	int totalPlacements = 0;
 	std::vector<UINT64> configs;
 	for (const auto& wd : inst._WindowData) {
-		if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2)
-			trackedWindows++;
 		for (const auto& p : wd.m_placements) {
 			configs.push_back(p.first);
 			totalPlacements++;
@@ -552,16 +812,22 @@ void UpdateStatusPanel()
 		}
 	}
 
+	TCHAR lastCapture[32];
+	TCHAR lastPersist[32];
+	FormatFileTimeLocal(&inst._LastCaptureUtc, lastCapture, _countof(lastCapture));
+	FormatFileTimeLocal(&inst._LastPersistUtc, lastPersist, _countof(lastPersist));
+
 	TCHAR text[1024];
 	StringCchPrintf(text, _countof(text),
 		_T("Config: 0x%016I64X  |  %d monitor(s)  |  %d tracked windows\r\n")
-		_T("Stored configs: %d  |  Placements: %d  |  Disk: %d KB  |  Persist: %s\r\n")
-		_T("Skip single monitor: %s  |  Autostart: %s"),
+		_T("Stored configs: %d  |  Placements: %d  |  Last capture: %s  |  Last disk: %s\r\n")
+		_T("Disk: %d KB  |  Persist: %s  |  Skip single: %s  |  Autostart: %s  |  Logging: %s"),
 		inst._ConfigHash, inst._NumMonitors, trackedWindows,
-		(int)configs.size(), totalPlacements,
+		(int)configs.size(), totalPlacements, lastCapture, lastPersist,
 		fileSize / 1024, inst.PersistPositions ? _T("ON") : _T("OFF"),
 		inst.SkipSingleMonitorRestore ? _T("ON") : _T("OFF"),
-		IsAutostartEnabled() ? _T("ON") : _T("OFF"));
+		IsAutostartEnabled() ? _T("ON") : _T("OFF"),
+		inst.LoggingEnabled ? _T("ON") : _T("OFF"));
 
 	SetWindowText(hStatus, text);
 }
@@ -728,10 +994,10 @@ void ProcessMonitors()
 			LogEvent(_T("CONFIG"), sz);
 
 			// restore windows to their saved positions for this config
-			InstanceData::g_Instance.RestoreWindowPositions(newHash);
-			didRestore = true;
+			int restored = InstanceData::g_Instance.RestoreWindowPositions(newHash);
+			didRestore = (restored > 0);
 		}
-		InstanceData::g_Instance.SaveToDisk();
+		InstanceData::g_Instance.SaveToDisk(_T("config change"));
 	}
 	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
@@ -761,11 +1027,16 @@ void ProcessDesktopWindows()
 	InstanceData::g_Instance.TagWindowsUnused();
 	int savedCount = 0;
 	EnumDesktopWindows(NULL, SaveWindowsCallback, (LPARAM)&savedCount);
+	GetSystemTimeAsFileTime(&InstanceData::g_Instance._LastCaptureUtc);
+	ConfigSnapshotInfo& snapshot = InstanceData::g_Instance._ConfigSnapshots[currentHash];
+	snapshot.lastSavedUtc = InstanceData::g_Instance._LastCaptureUtc;
+	snapshot.windowCount = (DWORD)savedCount;
 
 	TCHAR sz[256];
-	StringCchPrintf(sz, _countof(sz), _T("Saved %d window positions (cfg 0x%I64X)"),
+	StringCchPrintf(sz, _countof(sz), _T("Captured %d top-level window position(s) in memory for config 0x%I64X"),
 		savedCount, currentHash);
 	LogEvent(_T("SAVE"), sz);
+	UpdateStatusPanel();
 }
 
 
@@ -789,7 +1060,7 @@ VOID CALLBACK SaveTimerCallback(
 // Periodic timer to flush position data to disk (every 5 minutes).
 //
 #define PERSIST_TIMER_ID     3
-#define PERSIST_TIMER_MS     (2 * 60 * 1000)
+#define PERSIST_TIMER_MS     (5 * 60 * 1000)
 
 VOID CALLBACK PersistTimerCallback(
 	_In_ HWND     hwnd,
@@ -798,7 +1069,7 @@ VOID CALLBACK PersistTimerCallback(
 	_In_ DWORD    dwTime
 )
 {
-	InstanceData::g_Instance.SaveToDisk();
+	InstanceData::g_Instance.SaveToDisk(_T("periodic 5-minute flush"));
 }
 
 
@@ -903,15 +1174,24 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    // Set a reasonable font
    HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+	HDC hdc = GetDC(hWnd);
+	int logFontHeight = -MulDiv(9, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+	ReleaseDC(hWnd, hdc);
+	InstanceData::g_Instance._hLogFont = CreateFont(
+		logFontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+		FIXED_PITCH | FF_MODERN, _T("Consolas"));
    SendMessage(InstanceData::g_Instance._hStatus, WM_SETFONT, (WPARAM)hFont, TRUE);
-   SendMessage(InstanceData::g_Instance._hLogList, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hLogList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 
    // Set horizontal scroll extent for long log lines
-   SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 2000, 0);
+	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
 
    // Load user settings from registry
    LoadSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
-                InstanceData::g_Instance.PersistPositions);
+					 InstanceData::g_Instance.PersistPositions,
+					 InstanceData::g_Instance.LoggingEnabled);
 
    // Load persisted positions (if any exist, this also enables PersistPositions)
    InstanceData::g_Instance.LoadFromDisk();
@@ -939,8 +1219,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
        CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
        CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
            InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
+	   CheckMenuItem(menu, IDM_ENABLE_LOGGING,
+		   InstanceData::g_Instance.LoggingEnabled ? MF_CHECKED : MF_UNCHECKED);
    }
 
+   UpdateLoggingUiState();
    UpdateStatusPanel();
    LogEvent(_T("INFO"), _T("MonitorKeeper started"));
 
@@ -995,7 +1278,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
 						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
 					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
-						InstanceData::g_Instance.PersistPositions);
+						InstanceData::g_Instance.PersistPositions,
+						InstanceData::g_Instance.LoggingEnabled);
+					LogEvent(_T("INFO"), InstanceData::g_Instance.SkipSingleMonitorRestore
+						? _T("Skip single-monitor restore enabled")
+						: _T("Skip single-monitor restore disabled"));
 					UpdateStatusPanel();
 				}
 				break;
@@ -1006,6 +1293,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					HMENU menu = GetMenu(hWnd);
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_AUTOSTART, !enabled ? MF_CHECKED : MF_UNCHECKED);
+					LogEvent(_T("INFO"), !enabled ? _T("Autostart enabled") : _T("Autostart disabled"));
+					UpdateStatusPanel();
 				}
 				break;
 			case IDM_PERSIST_POSITIONS:
@@ -1017,10 +1306,35 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
 						InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
 					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
-						InstanceData::g_Instance.PersistPositions);
+						InstanceData::g_Instance.PersistPositions,
+						InstanceData::g_Instance.LoggingEnabled);
+					LogEvent(_T("INFO"), InstanceData::g_Instance.PersistPositions
+						? _T("Disk persistence enabled")
+						: _T("Disk persistence disabled"));
 					if (InstanceData::g_Instance.PersistPositions) {
-						InstanceData::g_Instance.SaveToDisk();
+						InstanceData::g_Instance.SaveToDisk(_T("persistence enabled from menu"));
 					}
+					UpdateStatusPanel();
+				}
+				break;
+			case IDM_ENABLE_LOGGING:
+				{
+					HMENU menu = GetMenu(hWnd);
+					menu = GetSubMenu(menu, 1);
+					if (InstanceData::g_Instance.LoggingEnabled) {
+						LogEvent(_T("INFO"), _T("Event logging disabled"));
+						InstanceData::g_Instance.LoggingEnabled = FALSE;
+					}
+					else {
+						InstanceData::g_Instance.LoggingEnabled = TRUE;
+						LogEvent(_T("INFO"), _T("Event logging enabled"));
+					}
+					CheckMenuItem(menu, IDM_ENABLE_LOGGING,
+						InstanceData::g_Instance.LoggingEnabled ? MF_CHECKED : MF_UNCHECKED);
+					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+						InstanceData::g_Instance.PersistPositions,
+						InstanceData::g_Instance.LoggingEnabled);
+					UpdateLoggingUiState();
 					UpdateStatusPanel();
 				}
 				break;
@@ -1088,10 +1402,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				int dh = abs((expected.bottom - expected.top) - (got.bottom - got.top));
 
 				if (dx > 20 || dy > 20 || dw > 20 || dh > 20) {
-					TCHAR sz[256];
+					TCHAR identity[512];
+					TCHAR sz[1024];
+					FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
 					StringCchPrintf(sz, _countof(sz),
 						_T("%s: expected (%d,%d %dx%d) got (%d,%d %dx%d)"),
-						wd.m_wndClass,
+						identity,
 						expected.left, expected.top,
 						expected.right - expected.left, expected.bottom - expected.top,
 						got.left, got.top,
@@ -1120,7 +1436,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DESTROY:
 		{
-		InstanceData::g_Instance.SaveToDisk();
+		InstanceData::g_Instance.SaveToDisk(_T("application exit"));
 		// destroy our notify icon.
 		NOTIFYICONDATA icon = {};
 		icon.cbSize = sizeof(icon);
