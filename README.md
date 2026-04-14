@@ -2,7 +2,10 @@
 
 Automatically restores window positions when your monitor configuration changes.
 
-**Author:** Garr Godfrey
+**Original Author:** Garr Godfrey
+
+**2026 Modifications:** Christian Käser
+
 **License:** MIT
 
 ## What it does

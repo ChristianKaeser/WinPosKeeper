@@ -161,12 +161,12 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "Garr Godfrey"
+            VALUE "CompanyName", "Christian Käser"
             VALUE "FileDescription", "Monitor Keeper"
             VALUE "FileVersion", "2.0.0.0"
-            VALUE "InternalName", "MonitorK.exe"
-            VALUE "LegalCopyright", "Copyright (C) 2018-2026"
-            VALUE "OriginalFilename", "MonitorK.exe"
+            VALUE "InternalName", "MonitorKeeper.exe"
+            VALUE "LegalCopyright", "2018-2026"
+            VALUE "OriginalFilename", "MonitorKeeper.exe"
             VALUE "ProductName", "Monitor Keeper"
             VALUE "ProductVersion", "2.0.0.0"
         END
