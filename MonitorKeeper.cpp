@@ -912,6 +912,19 @@ static void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error)
 	LogEventFormat(type, _T("%s failed: %s (%lu)"), context, errorText, error);
 }
 
+static HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall)
+{
+	int width = GetSystemMetrics(isSmall ? SM_CXSMICON : SM_CXICON);
+	int height = GetSystemMetrics(isSmall ? SM_CYSMICON : SM_CYICON);
+	HICON icon = (HICON)LoadImage(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER), IMAGE_ICON,
+		width, height, LR_DEFAULTCOLOR | LR_SHARED);
+	if (icon == NULL) {
+		icon = LoadIcon(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
+	}
+	return icon;
+}
+
+
 static void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer)
 {
 	TCHAR className[256] = _T("");
@@ -1223,12 +1236,12 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.cbClsExtra     = 0;
     wcex.cbWndExtra     = 0;
     wcex.hInstance      = hInstance;
-    wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
+	wcex.hIcon          = LoadAppIcon(hInstance, FALSE);
     wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
     wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_MONITORKEEPER);
     wcex.lpszClassName  = szWindowClass;
-    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+	wcex.hIconSm        = LoadAppIcon(wcex.hInstance, TRUE);
 
     return RegisterClassExW(&wcex);
 }
@@ -1456,7 +1469,7 @@ void AddTrayIcon(HWND hWnd)
    icon.uID = 1;
    icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
    icon.uCallbackMessage = WM_USER + 100;
-   icon.hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_MONITORKEEPER));
+   icon.hIcon = LoadAppIcon(hInst, TRUE);
    lstrcpy(icon.szTip, _T("Monitor Keeper"));
 	Shell_NotifyIcon(NIM_DELETE, &icon);
 	if (!Shell_NotifyIcon(NIM_ADD, &icon)) {

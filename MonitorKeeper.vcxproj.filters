@@ -36,10 +36,7 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="small.ico">
-      <Filter>Resource Files</Filter>
-    </Image>
-    <Image Include="MonitorKeeper.ico">
+    <Image Include="Icon_v2.ico">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>
