@@ -49,7 +49,7 @@ BEGIN
         MENUITEM "&About ...",                  IDM_ABOUT
         MENUITEM "Show Window...",              IDM_SHOWWINDOW
         MENUITEM SEPARATOR
-        MENUITEM "Skip &Single Monitor Restore", IDM_SKIP_SINGLE_MONITOR, CHECKED
+        MENUITEM "Restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
         MENUITEM "Start with &Windows",         IDM_AUTOSTART
         MENUITEM "&Persist Positions to Disk",   IDM_PERSIST_POSITIONS
         MENUITEM "Enable Event &Logging",       IDM_ENABLE_LOGGING, CHECKED

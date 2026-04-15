@@ -14,7 +14,7 @@
 #define ID_FILE                         32771
 #define ID_NOTIFY_SHOWWINDOW            32772
 #define IDM_SHOWWINDOW                  32773
-#define IDM_SKIP_SINGLE_MONITOR         32774
+#define IDM_RESTORE_ON_DISCONNECT       32774
 #define IDM_AUTOSTART                   32775
 #define IDM_PERSIST_POSITIONS           32776
 #define IDM_ENABLE_LOGGING              32777

@@ -23,7 +23,7 @@ handles any configuration change — not just adding/removing monitors.
 - **Persistent storage** — optionally saves positions to disk so they survive reboots
   (`%APPDATA%\MonitorKeeper\positions.dat`)
 - **Start with Windows** — optional autostart via the system tray menu
-- **Skip single-monitor restore** — avoid shuffling windows when going down to one monitor
+- **Restore on disconnect** — optionally re-apply saved positions after a monitor disappears
 - **DPI-aware** — PerMonitorV2 manifest for correct behavior on mixed-DPI setups
 - **Explorer restart resilient** — tray icon re-creates itself if Explorer crashes
 
@@ -34,8 +34,8 @@ MonitorKeeper runs in the system tray. Right-click the tray icon for options:
 | Menu item | Description |
 |-----------|-------------|
 | About | Version info |
-| Show Window | Show the debug log window (Debug builds) |
-| Skip Single Monitor Restore | When checked, don't restore positions when going to 1 monitor |
+| Show Window | Show the main status and event log window |
+| Restore positions when monitors disconnect | When checked, MonitorKeeper re-applies saved positions after a monitor disconnects |
 | Start with Windows | Toggle autostart at login |
 | Persist Positions to Disk | Save/load positions across restarts |
 | Exit | Quit MonitorKeeper |

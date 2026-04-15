@@ -15,7 +15,7 @@
 //   - Automatic save/restore of window positions per monitor configuration
 //   - Persistent storage of positions to disk (%APPDATA%\MonitorKeeper\positions.dat)
 //   - Optional "Start with Windows" autostart via registry
-//   - Optional skip of restore when going to a single monitor
+//   - Optional restore when monitors disconnect
 //   - DPI-aware (PerMonitorV2)
 //   - Survives Explorer restarts (re-creates tray icon)
 //
@@ -33,8 +33,11 @@
 
 #define MAX_LOG_ENTRIES  500
 #define STATUS_HEIGHT    88
+#define DISPLAY_SETTLE_TIMER_ID 99
+#define DISPLAY_SETTLE_MS  2000
 #define VERIFY_TIMER_ID  4
 #define VERIFY_TIMER_MS  2000
+#define PLACEMENT_TOLERANCE 20
 #define MAX_LOADSTRING 100
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -58,6 +61,9 @@ static void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size
 static void FormatWin32Error(DWORD error, TCHAR* buffer, size_t cchBuffer);
 static void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error);
 static void GetCurrentMonitorSummary(TCHAR* buffer, size_t cchBuffer);
+static HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall);
+static int NormalizeShowCommandForCompare(int showCmd);
+static BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual);
 static void ShowMainWindow(HWND hWnd);
 static void ShowLogContextMenu(HWND hWnd, int x, int y);
 static BOOL CopyTextToClipboard(HWND hWndOwner, const std::basic_string<TCHAR>& text);
@@ -114,7 +120,7 @@ static void SetAutostart(BOOL enable)
 	RegCloseKey(hKey);
 }
 
-static void SaveSettings(BOOL skipSingle, BOOL persistPositions, BOOL loggingEnabled)
+static void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled)
 {
 	HKEY hKey;
 	LONG status = RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
@@ -123,10 +129,10 @@ static void SaveSettings(BOOL skipSingle, BOOL persistPositions, BOOL loggingEna
 		LogWin32Error(_T("WARNING"), _T("RegCreateKeyEx for settings"), status);
 		return;
 	}
-	DWORD val = skipSingle ? 1 : 0;
-	status = RegSetValueEx(hKey, _T("SkipSingleMonitor"), 0, REG_DWORD,
+	DWORD val = restoreOnDisconnect ? 1 : 0;
+	status = RegSetValueEx(hKey, _T("RestoreOnDisconnect"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
-	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx SkipSingleMonitor"), status);
+	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreOnDisconnect"), status);
 	val = persistPositions ? 1 : 0;
 	status = RegSetValueEx(hKey, _T("PersistPositions"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
@@ -138,15 +144,22 @@ static void SaveSettings(BOOL skipSingle, BOOL persistPositions, BOOL loggingEna
 	RegCloseKey(hKey);
 }
 
-static void LoadSettings(BOOL& skipSingle, BOOL& persistPositions, BOOL& loggingEnabled)
+static void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled)
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
 		return;
 	DWORD val, size = sizeof(val);
-	if (RegQueryValueEx(hKey, _T("SkipSingleMonitor"), NULL, NULL,
-		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
-		skipSingle = val ? TRUE : FALSE;
+	if (RegQueryValueEx(hKey, _T("RestoreOnDisconnect"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+		restoreOnDisconnect = val ? TRUE : FALSE;
+	}
+	else {
+		size = sizeof(val);
+		if (RegQueryValueEx(hKey, _T("SkipSingleMonitor"), NULL, NULL,
+			reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
+			restoreOnDisconnect = val ? FALSE : TRUE;
+	}
 	size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("PersistPositions"), NULL, NULL,
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
@@ -355,6 +368,17 @@ public:
 		if (it->second.length != sizeof(WINDOWPLACEMENT))
 			return FALSE;
 
+		WINDOWPLACEMENT actual = {};
+		actual.length = sizeof(WINDOWPLACEMENT);
+		if (GetWindowPlacement(m_hwnd, &actual)) {
+			if (!WindowPlacementNeedsRestore(it->second, actual)) {
+				return FALSE;
+			}
+		}
+		else {
+			LogWin32Error(_T("WARNING"), _T("GetWindowPlacement while deciding restore necessity"), GetLastError());
+		}
+
 		// verify window class hasn't changed (HWND reuse)
 		RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
 		if (lstrcmp(szTempClass, m_wndClass) != 0) {
@@ -423,7 +447,7 @@ public:
 		_hLogList = NULL;
 		_hLogFont = NULL;
 		InChangingState = false;
-		SkipSingleMonitorRestore = true;
+		RestoreOnDisconnect = true;
 		PersistPositions = false;
 		LoggingEnabled = true;
 		_LastCaptureUtc.dwLowDateTime = 0;
@@ -489,6 +513,29 @@ public:
 			}
 		}
 		return trackedWindows;
+	}
+
+	int CountSavedWindowRecords() const
+	{
+		int count = 0;
+		for (const auto& wd : _WindowData)
+		{
+			if (wd.m_wndClass[0] != '\0' && !wd.m_placements.empty())
+			{
+				count++;
+			}
+		}
+		return count;
+	}
+
+	int CountTotalPlacements() const
+	{
+		int count = 0;
+		for (const auto& wd : _WindowData)
+		{
+			count += (int)wd.m_placements.size();
+		}
+		return count;
 	}
 
 	int CountPlacementsForConfig(UINT64 configHash) const
@@ -669,8 +716,8 @@ public:
 
 		TCHAR message[512];
 		StringCchPrintf(message, _countof(message),
-			_T("Persisted %lu window record(s) across %lu config snapshot(s) to disk (%s)"),
-			entryCount, snapshotCount, (reason != NULL) ? reason : _T("unspecified"));
+			_T("Persisted %lu window record(s), %d placement(s), across %lu config snapshot(s) to disk (%s)"),
+			entryCount, CountTotalPlacements(), snapshotCount, (reason != NULL) ? reason : _T("unspecified"));
 		LOG_EVENT(_T("DISK"), message);
 		UpdateStatusPanel();
 		return TRUE;
@@ -794,8 +841,8 @@ public:
 
 		TCHAR message[256];
 		StringCchPrintf(message, _countof(message),
-			_T("Loaded persisted data from disk (%lu window record(s))"),
-			entryCount);
+			_T("Loaded persisted data from disk (%lu window record(s), %d placement(s))"),
+			entryCount, CountTotalPlacements());
 		LOG_EVENT(_T("DISK"), message);
 	}
 
@@ -811,7 +858,7 @@ public:
 	HWND				_hLogList;
 	HFONT				_hLogFont;
 	BOOL				InChangingState;
-	BOOL				SkipSingleMonitorRestore;
+	BOOL				RestoreOnDisconnect;
 	BOOL				PersistPositions;
 	BOOL				LoggingEnabled;
 	BOOL				AlreadyRunning;
@@ -924,6 +971,38 @@ static HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall)
 	return icon;
 }
 
+static int NormalizeShowCommandForCompare(int showCmd)
+{
+	switch (showCmd)
+	{
+	case SW_RESTORE:
+	case SW_SHOWNORMAL:
+	case SW_SHOWNOACTIVATE:
+		return SW_SHOWNORMAL;
+	case SW_MINIMIZE:
+	case SW_SHOWMINIMIZED:
+	case SW_SHOWMINNOACTIVE:
+		return SW_SHOWMINIMIZED;
+	default:
+		return showCmd;
+	}
+}
+
+static BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual)
+{
+	if (actual.length != sizeof(WINDOWPLACEMENT)) {
+		return TRUE;
+	}
+
+	if (NormalizeShowCommandForCompare(expected.showCmd) != NormalizeShowCommandForCompare(actual.showCmd)) {
+		return TRUE;
+	}
+
+	return abs(expected.rcNormalPosition.left - actual.rcNormalPosition.left) > PLACEMENT_TOLERANCE ||
+		abs(expected.rcNormalPosition.top - actual.rcNormalPosition.top) > PLACEMENT_TOLERANCE ||
+		abs(expected.rcNormalPosition.right - actual.rcNormalPosition.right) > PLACEMENT_TOLERANCE ||
+		abs(expected.rcNormalPosition.bottom - actual.rcNormalPosition.bottom) > PLACEMENT_TOLERANCE;
+}
 
 static void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer)
 {
@@ -1122,12 +1201,13 @@ void UpdateStatusPanel()
 	auto& inst = InstanceData::g_Instance;
 
 	int trackedWindows = inst.CountTrackedWindows();
-	int totalPlacements = 0;
+	int windowRecords = inst.CountSavedWindowRecords();
+	int currentConfigPlacements = inst.CountPlacementsForConfig(inst._ConfigHash);
+	int totalPlacements = inst.CountTotalPlacements();
 	std::vector<UINT64> configs;
 	for (const auto& wd : inst._WindowData) {
 		for (const auto& p : wd.m_placements) {
 			configs.push_back(p.first);
-			totalPlacements++;
 		}
 	}
 	std::sort(configs.begin(), configs.end());
@@ -1155,14 +1235,14 @@ void UpdateStatusPanel()
 	TCHAR text[1024];
 	StringCchPrintf(text, _countof(text),
 		_T("Config #%d: 0x%016I64X  |  Monitors: %s\r\n")
-		_T("Stored configs: %d  |  Placements: %d  |  Tracked windows: %d\r\n")
-		_T("Last capture: %s  |  Last disk: %s  |  Disk: %d KB  |  Persist: %s  |  Skip single: %s  |  Autostart: %s  |  Logging: %s"),
+		_T("Stored configs: %d  |  Window records: %d  |  Current cfg positions: %d  |  Total placements: %d  |  Recent HWNDs: %d\r\n")
+		_T("Last capture: %s  |  Last disk: %s  |  Disk: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Autostart: %s  |  Logging: %s"),
 		configId, inst._ConfigHash,
 		monitorSummary,
-		(int)configs.size(), totalPlacements, trackedWindows,
+		(int)configs.size(), windowRecords, currentConfigPlacements, totalPlacements, trackedWindows,
 		lastCapture, lastPersist,
 		fileSize / 1024, inst.PersistPositions ? _T("ON") : _T("OFF"),
-		inst.SkipSingleMonitorRestore ? _T("ON") : _T("OFF"),
+		inst.RestoreOnDisconnect ? _T("ON") : _T("OFF"),
 		IsAutostartEnabled() ? _T("ON") : _T("OFF"),
 		inst.LoggingEnabled ? _T("ON") : _T("OFF"));
 
@@ -1315,17 +1395,21 @@ void ProcessMonitors()
 {
 	UINT64 newHash = ComputeMonitorConfigHash();
 	int monitors = GetCurrentMonitorCount();
-	int oldConfigId = InstanceData::g_Instance.GetOrCreateConfigId(InstanceData::g_Instance._ConfigHash);
+	UINT64 oldHash = InstanceData::g_Instance._ConfigHash;
+	int oldMonitorCount = InstanceData::g_Instance._NumMonitors;
+	int oldConfigId = InstanceData::g_Instance.GetOrCreateConfigId(oldHash);
 	int newConfigId = InstanceData::g_Instance.GetOrCreateConfigId(newHash);
 	TCHAR monitorSummary[1024];
 	GetCurrentMonitorSummary(monitorSummary, _countof(monitorSummary));
+	bool configChanged = (newHash != oldHash);
+	bool monitorCountDropped = (oldMonitorCount > 0 && monitors < oldMonitorCount);
+	bool allowRestore = (!monitorCountDropped || InstanceData::g_Instance.RestoreOnDisconnect);
 	bool didRestore = false;
-	if (newHash != InstanceData::g_Instance._ConfigHash)
+	if (configChanged)
 	{
-		// Optionally skip restore when going to a single monitor
-		if (monitors == 1 && InstanceData::g_Instance.SkipSingleMonitorRestore)
+		if (!allowRestore)
 		{
-			LOG_EVENTF(_T("CONFIG"), _T("Config #%d -> #%d, %s; skipping restore because single-monitor restore is disabled"),
+			LOG_EVENTF(_T("CONFIG"), _T("Config #%d -> #%d, %s; skipping restore because restore-on-disconnect is disabled"),
 				oldConfigId, newConfigId, monitorSummary);
 		}
 		else
@@ -1335,16 +1419,34 @@ void ProcessMonitors()
 			// restore windows to their saved positions for this config
 			int restored = InstanceData::g_Instance.RestoreWindowPositions(newHash);
 			didRestore = (restored > 0);
-			if (restored == 0) {
+			if (restored == 0 && InstanceData::g_Instance.CountPlacementsForConfig(newHash) == 0) {
 				LOG_EVENTF(_T("WARNING"), _T("No matching saved placements available for config #%d"), newConfigId);
+			}
+			else if (restored == 0) {
+				LOG_EVENTF(_T("RESTORE"), _T("Config #%d already matches stored placements; no window moves were needed"), newConfigId);
 			}
 		}
 		InstanceData::g_Instance.SaveToDisk(_T("config change"));
 	}
 	else if (InstanceData::g_Instance.InChangingState)
 	{
-		LOG_EVENTF(_T("CONFIG"), _T("Display change settled but config remained #%d, %s; no restore required"),
+		LOG_EVENTF(_T("CONFIG"), _T("Display change settled on existing config #%d, %s"),
 			newConfigId, monitorSummary);
+		if (!allowRestore)
+		{
+			LOG_EVENT(_T("CONFIG"), _T("Skipping restore because restore-on-disconnect is disabled"));
+		}
+		else
+		{
+			int restored = InstanceData::g_Instance.RestoreWindowPositions(newHash);
+			didRestore = (restored > 0);
+			if (restored == 0 && InstanceData::g_Instance.CountPlacementsForConfig(newHash) == 0) {
+				LOG_EVENTF(_T("WARNING"), _T("No matching saved placements available for config #%d"), newConfigId);
+			}
+			else if (restored == 0) {
+				LOG_EVENTF(_T("RESTORE"), _T("Config #%d already matches stored placements; no window moves were needed"), newConfigId);
+			}
+		}
 	}
 	InstanceData::g_Instance._ConfigHash = newHash;
 	InstanceData::g_Instance._NumMonitors = monitors;
@@ -1549,7 +1651,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
 
    // Load user settings from registry
-   LoadSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 					 InstanceData::g_Instance.PersistPositions,
 					 InstanceData::g_Instance.LoggingEnabled);
 
@@ -1574,8 +1676,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    {
        HMENU menu = GetMenu(hWnd);
        menu = GetSubMenu(menu, 1);
-       CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
-           InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
+	   CheckMenuItem(menu, IDM_RESTORE_ON_DISCONNECT,
+	       InstanceData::g_Instance.RestoreOnDisconnect ? MF_CHECKED : MF_UNCHECKED);
        CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
        CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
            InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
@@ -1615,38 +1717,39 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				(UINT)wParam, LOWORD(lParam), HIWORD(lParam), monitorSummary);
 		}
 		KillTimer(hWnd, 2);  // Cancel any pending save to avoid saving mid-transition positions
+		KillTimer(hWnd, DISPLAY_SETTLE_TIMER_ID);
 		InstanceData::g_Instance.InChangingState = true;
-		SetTimer(hWnd, 99, 500, TimerCallback);
+		SetTimer(hWnd, DISPLAY_SETTLE_TIMER_ID, DISPLAY_SETTLE_MS, TimerCallback);
 		break;
     case WM_COMMAND:
         {
             int wmId = LOWORD(wParam);
             // Parse the menu selections:
-            switch (wmId)
-            {
-            case IDM_ABOUT:
-                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
+			switch (wmId)
+			{
+			case IDM_ABOUT:
+				DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+				break;
+			case IDM_EXIT:
+				DestroyWindow(hWnd);
+				break;
 			case IDM_SHOWWINDOW:
 				ShowMainWindow(hWnd);
 				break;
-			case IDM_SKIP_SINGLE_MONITOR:
+			case IDM_RESTORE_ON_DISCONNECT:
 				{
-					InstanceData::g_Instance.SkipSingleMonitorRestore =
-						!InstanceData::g_Instance.SkipSingleMonitorRestore;
+					InstanceData::g_Instance.RestoreOnDisconnect =
+						!InstanceData::g_Instance.RestoreOnDisconnect;
 					HMENU menu = GetMenu(hWnd);
 					menu = GetSubMenu(menu, 1);
-					CheckMenuItem(menu, IDM_SKIP_SINGLE_MONITOR,
-						InstanceData::g_Instance.SkipSingleMonitorRestore ? MF_CHECKED : MF_UNCHECKED);
-					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+					CheckMenuItem(menu, IDM_RESTORE_ON_DISCONNECT,
+						InstanceData::g_Instance.RestoreOnDisconnect ? MF_CHECKED : MF_UNCHECKED);
+					SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 						InstanceData::g_Instance.PersistPositions,
 						InstanceData::g_Instance.LoggingEnabled);
-					LOG_EVENT(_T("INFO"), InstanceData::g_Instance.SkipSingleMonitorRestore
-						? _T("Skip single-monitor restore enabled")
-						: _T("Skip single-monitor restore disabled"));
+					LOG_EVENT(_T("INFO"), InstanceData::g_Instance.RestoreOnDisconnect
+						? _T("Restore-on-disconnect enabled")
+						: _T("Restore-on-disconnect disabled"));
 					UpdateStatusPanel();
 				}
 				break;
@@ -1669,7 +1772,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					menu = GetSubMenu(menu, 1);
 					CheckMenuItem(menu, IDM_PERSIST_POSITIONS,
 						InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
-					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+					SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 						InstanceData::g_Instance.PersistPositions,
 						InstanceData::g_Instance.LoggingEnabled);
 					LOG_EVENT(_T("INFO"), InstanceData::g_Instance.PersistPositions
@@ -1695,7 +1798,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					}
 					CheckMenuItem(menu, IDM_ENABLE_LOGGING,
 						InstanceData::g_Instance.LoggingEnabled ? MF_CHECKED : MF_UNCHECKED);
-					SaveSettings(InstanceData::g_Instance.SkipSingleMonitorRestore,
+					SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 						InstanceData::g_Instance.PersistPositions,
 						InstanceData::g_Instance.LoggingEnabled);
 					UpdateLoggingUiState();
@@ -1794,7 +1897,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				int dw = abs((expected.right - expected.left) - (got.right - got.left));
 				int dh = abs((expected.bottom - expected.top) - (got.bottom - got.top));
 
-				if (dx > 20 || dy > 20 || dw > 20 || dh > 20) {
+				if (dx > PLACEMENT_TOLERANCE || dy > PLACEMENT_TOLERANCE ||
+					dw > PLACEMENT_TOLERANCE || dh > PLACEMENT_TOLERANCE) {
 					TCHAR identity[512];
 					TCHAR sz[1024];
 					FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
