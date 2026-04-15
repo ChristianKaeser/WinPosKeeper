@@ -167,12 +167,23 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AppState.h" />
+    <ClInclude Include="LoggingUI.h" />
+    <ClInclude Include="MonitorConfig.h" />
     <ClInclude Include="MonitorKeeper.h" />
+    <ClInclude Include="Persistence.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="TrayUI.h" />
+    <ClInclude Include="WindowTracking.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="LoggingUI.cpp" />
+    <ClCompile Include="MonitorConfig.cpp" />
     <ClCompile Include="MonitorKeeper.cpp" />
+    <ClCompile Include="Persistence.cpp" />
+    <ClCompile Include="TrayUI.cpp" />
+    <ClCompile Include="WindowTracking.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MonitorKeeper.rc" />
