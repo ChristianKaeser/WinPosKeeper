@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AppState.h"
+#include "MonitorKeeper.h"
 
 BOOL IsAutostartEnabled();
 void SetAutostart(BOOL enable);

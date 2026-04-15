@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AppState.h"
+#include "MonitorKeeper.h"
 
 struct MonitorInfo {
 	RECT rcMonitor;

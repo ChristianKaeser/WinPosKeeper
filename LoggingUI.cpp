@@ -1,5 +1,7 @@
 #include "LoggingUI.h"
 
+#include "AppState.h"
+
 #include "MonitorConfig.h"
 #include "Persistence.h"
 

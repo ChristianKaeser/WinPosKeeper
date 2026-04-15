@@ -1,5 +1,7 @@
 #include "WindowTracking.h"
 
+#include "AppState.h"
+
 #include "LoggingUI.h"
 #include "MonitorConfig.h"
 

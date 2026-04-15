@@ -1,5 +1,7 @@
 #include "Persistence.h"
 
+#include "AppState.h"
+
 #include "LoggingUI.h"
 
 #define AUTOSTART_REG_KEY _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AppState.h"
+#include "MonitorKeeper.h"
 
 ATOM MyRegisterClass(HINSTANCE hInstance);
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow);

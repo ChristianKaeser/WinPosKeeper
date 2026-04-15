@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AppState.h"
+#include "MonitorKeeper.h"
 
 LPCTSTR TranslateShowCommand(int nShowCmd);
 void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer);

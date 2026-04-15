@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AppState.h"
+#include "MonitorKeeper.h"
 
 BOOL ShouldLogEvents();
 void LogEvent(LPCTSTR type, LPCTSTR detail);

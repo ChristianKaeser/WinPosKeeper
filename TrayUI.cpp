@@ -1,5 +1,7 @@
 #include "TrayUI.h"
 
+#include "AppState.h"
+
 #include "LoggingUI.h"
 #include "MonitorConfig.h"
 #include "Persistence.h"
