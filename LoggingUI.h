@@ -10,6 +10,7 @@ void UpdateStatusPanel();
 void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchBuffer);
 void FormatWin32Error(DWORD error, TCHAR* buffer, size_t cchBuffer);
 void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error);
+HICON LoadAppIconSized(HINSTANCE instance, int width, int height);
 HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall);
 std::basic_string<TCHAR> GetLogEntryText(HWND hList, int index);
 std::basic_string<TCHAR> GetAllLogText(HWND hList);

@@ -91,16 +91,21 @@ void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error)
 	LogEventFormat(type, _T("%s failed: %s (%lu)"), context, errorText, error);
 }
 
-HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall)
+HICON LoadAppIconSized(HINSTANCE instance, int width, int height)
 {
-	int width = GetSystemMetrics(isSmall ? SM_CXSMICON : SM_CXICON);
-	int height = GetSystemMetrics(isSmall ? SM_CYSMICON : SM_CYICON);
 	HICON icon = (HICON)LoadImage(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER), IMAGE_ICON,
 		width, height, LR_DEFAULTCOLOR | LR_SHARED);
 	if (icon == NULL) {
 		icon = LoadIcon(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
 	}
 	return icon;
+}
+
+HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall)
+{
+	int width = GetSystemMetrics(isSmall ? SM_CXSMICON : SM_CXICON);
+	int height = GetSystemMetrics(isSmall ? SM_CYSMICON : SM_CYICON);
+	return LoadAppIconSized(instance, width, height);
 }
 
 std::basic_string<TCHAR> GetLogEntryText(HWND hList, int index)

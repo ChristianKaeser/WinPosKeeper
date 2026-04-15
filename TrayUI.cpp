@@ -16,7 +16,7 @@ static HMENU GetMainOptionsMenu(HWND hWnd)
 static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 {
 	int iconX = cx - 4 - STATUS_ICON_SIZE;
-	int iconY = 8;
+	int iconY = 4;
 	int statusWidth = iconX - 8;
 	if (statusWidth < 100) {
 		statusWidth = 100;
@@ -141,7 +141,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		hWnd, NULL, hInstance, NULL);
 	InstanceData::g_Instance._hStatusIcon = CreateWindowEx(0, _T("STATIC"), NULL,
 		WS_CHILD | WS_VISIBLE | SS_ICON | SS_CENTERIMAGE,
-		654, 8, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
+		654, 4, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
 		hWnd, NULL, hInstance, NULL);
 	InstanceData::g_Instance._hLogList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
@@ -153,7 +153,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
-	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON, (LPARAM)LoadAppIcon(hInstance, FALSE));
+	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON,
+		(LPARAM)LoadAppIconSized(hInstance, STATUS_ICON_SIZE, STATUS_ICON_SIZE));
 
 	HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	HDC hdc = GetDC(hWnd);
