@@ -2,7 +2,7 @@
 
 Automatically restores window positions when your monitor configuration changes.
 
-MonWinPosKeeper is a continuation of the original MonitorKeeper by Garr Godfrey.
+MonWinPosKeeper is a continuation of the original MonitorKeeper project by Garr Godfrey.
 
 **Original Author:** Garr Godfrey
 

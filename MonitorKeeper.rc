@@ -97,7 +97,7 @@ CAPTION "About MonWinPosKeeper"
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
     ICON            IDI_MONITORKEEPER,IDC_STATIC,14,14,20,20
-    LTEXT           "MonWinPosKeeper, Version 2.0",IDC_STATIC,42,14,172,8,SS_NOPREFIX
+    LTEXT           "MonWinPosKeeper, Version 2.0, 2026",IDC_STATIC,42,14,172,8,SS_NOPREFIX
     LTEXT           "Based on the original MonitorKeeper by Garr Godfrey",IDC_STATIC,42,26,172,16
     DEFPUSHBUTTON   "OK",IDOK,178,41,50,14,WS_GROUP
 END
