@@ -6,6 +6,7 @@
 #define MAX_CONFIGSLOTS 16
 #define MAX_LOG_ENTRIES 500
 #define STATUS_HEIGHT 88
+#define STATUS_ICON_SIZE 32
 #define CAPTURE_TIMER_ID 2
 #define PERSIST_TIMER_ID 3
 #define PERSIST_TIMER_MS (5 * 60 * 1000)
@@ -72,6 +73,7 @@ public:
 	int _NumMonitors;
 	HWND _MainWnd;
 	HWND _hStatus;
+	HWND _hStatusIcon;
 	HWND _hLogList;
 	HFONT _hLogFont;
 	BOOL InChangingState;

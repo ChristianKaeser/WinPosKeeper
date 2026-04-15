@@ -11,6 +11,23 @@ static HMENU GetNotifyMenu(HWND hWnd)
 	return GetSubMenu(menu, 1);
 }
 
+static void LayoutMainWindow(HWND hWnd, int cx, int cy)
+{
+	int iconX = cx - 4 - STATUS_ICON_SIZE;
+	int iconY = 8;
+	int statusWidth = iconX - 8;
+	if (statusWidth < 100) {
+		statusWidth = 100;
+	}
+
+	if (InstanceData::g_Instance._hStatus)
+		MoveWindow(InstanceData::g_Instance._hStatus, 4, 4, statusWidth, STATUS_HEIGHT, TRUE);
+	if (InstanceData::g_Instance._hStatusIcon)
+		MoveWindow(InstanceData::g_Instance._hStatusIcon, iconX, iconY, STATUS_ICON_SIZE, STATUS_ICON_SIZE, TRUE);
+	if (InstanceData::g_Instance._hLogList)
+		MoveWindow(InstanceData::g_Instance._hLogList, 4, STATUS_HEIGHT + 8, cx - 8, cy - STATUS_HEIGHT - 12, TRUE);
+}
+
 static void UpdateMenuChecks(HWND hWnd)
 {
 	HMENU menu = GetNotifyMenu(hWnd);
@@ -92,7 +109,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	InstanceData::g_Instance._MainWnd = hWnd;
 	InstanceData::g_Instance._hStatus = CreateWindowEx(0, _T("STATIC"), _T(""),
 		WS_CHILD | WS_VISIBLE | SS_LEFT,
-		4, 4, 690, STATUS_HEIGHT,
+		4, 4, 646, STATUS_HEIGHT,
+		hWnd, NULL, hInstance, NULL);
+	InstanceData::g_Instance._hStatusIcon = CreateWindowEx(0, _T("STATIC"), NULL,
+		WS_CHILD | WS_VISIBLE | SS_ICON | SS_CENTERIMAGE,
+		654, 8, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
 		hWnd, NULL, hInstance, NULL);
 	InstanceData::g_Instance._hLogList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
@@ -100,10 +121,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		4, STATUS_HEIGHT + 8, 690, 400,
 		hWnd, NULL, hInstance, NULL);
 
-	if (InstanceData::g_Instance._hStatus == NULL || InstanceData::g_Instance._hLogList == NULL) {
+	if (InstanceData::g_Instance._hStatus == NULL || InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL) {
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
+	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON, (LPARAM)LoadAppIcon(hInstance, FALSE));
 
 	HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	HDC hdc = GetDC(hWnd);
@@ -134,6 +156,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	UpdateMenuChecks(hWnd);
 	UpdateLoggingUiState();
 	UpdateStatusPanel();
+	RECT clientRect = {};
+	GetClientRect(hWnd, &clientRect);
+	LayoutMainWindow(hWnd, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
 	LOG_EVENT(_T("INFO"), _T("MonitorKeeper started"));
 
 	return TRUE;
@@ -270,10 +295,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		{
 			int cx = LOWORD(lParam);
 			int cy = HIWORD(lParam);
-			if (InstanceData::g_Instance._hStatus)
-				MoveWindow(InstanceData::g_Instance._hStatus, 4, 4, cx - 8, STATUS_HEIGHT, TRUE);
-			if (InstanceData::g_Instance._hLogList)
-				MoveWindow(InstanceData::g_Instance._hLogList, 4, STATUS_HEIGHT + 8, cx - 8, cy - STATUS_HEIGHT - 12, TRUE);
+			LayoutMainWindow(hWnd, cx, cy);
 		}
 		break;
 	case WM_TIMER:
@@ -317,6 +339,8 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 	switch (message)
 	{
 	case WM_INITDIALOG:
+		SendMessage(hDlg, WM_SETICON, ICON_BIG, (LPARAM)LoadAppIcon(hInst, FALSE));
+		SendMessage(hDlg, WM_SETICON, ICON_SMALL, (LPARAM)LoadAppIcon(hInst, TRUE));
 		return (INT_PTR)TRUE;
 
 	case WM_COMMAND:

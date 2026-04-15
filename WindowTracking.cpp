@@ -125,6 +125,7 @@ InstanceData::InstanceData()
 	_ConfigSnapshots.clear();
 	_MainWnd = NULL;
 	_hStatus = NULL;
+	_hStatusIcon = NULL;
 	_hLogList = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
