@@ -1367,8 +1367,7 @@ void ProcessDesktopWindows()
 	snapshot.lastSavedUtc = InstanceData::g_Instance._LastCaptureUtc;
 	snapshot.windowCount = (DWORD)savedCount;
 
-	LOG_EVENTF(_T("SAVE"), _T("Captured %d top-level window position(s) in memory for config #%d"),
-		savedCount, configId);
+	//LOG_EVENTF(_T("SAVE"), _T("Captured %d top-level window position(s) in memory for config #%d"), savedCount, configId);
 	UpdateStatusPanel();
 }
 
