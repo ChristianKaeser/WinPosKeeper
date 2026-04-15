@@ -17,5 +17,6 @@
 #include <tchar.h>
 #include <strsafe.h>
 #include <map>
+#include <string>
 #include <vector>
 #include <algorithm>
