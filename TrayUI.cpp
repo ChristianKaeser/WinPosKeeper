@@ -5,10 +5,10 @@
 #include "Persistence.h"
 #include "WindowTracking.h"
 
-static HMENU GetNotifyMenu(HWND hWnd)
+static HMENU GetMainOptionsMenu(HWND hWnd)
 {
 	HMENU menu = GetMenu(hWnd);
-	return GetSubMenu(menu, 1);
+	return GetSubMenu(menu, 0);
 }
 
 static void LayoutMainWindow(HWND hWnd, int cx, int cy)
@@ -28,9 +28,8 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 		MoveWindow(InstanceData::g_Instance._hLogList, 4, STATUS_HEIGHT + 8, cx - 8, cy - STATUS_HEIGHT - 12, TRUE);
 }
 
-static void UpdateMenuChecks(HWND hWnd)
+static void ApplyMenuChecks(HMENU menu)
 {
-	HMENU menu = GetNotifyMenu(hWnd);
 	CheckMenuItem(menu, IDM_RESTORE_ON_DISCONNECT,
 		InstanceData::g_Instance.RestoreOnDisconnect ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(menu, IDM_AUTOSTART, IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED);
@@ -38,6 +37,33 @@ static void UpdateMenuChecks(HWND hWnd)
 		InstanceData::g_Instance.PersistPositions ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(menu, IDM_ENABLE_LOGGING,
 		InstanceData::g_Instance.LoggingEnabled ? MF_CHECKED : MF_UNCHECKED);
+}
+
+static void UpdateMainMenuChecks(HWND hWnd)
+{
+	ApplyMenuChecks(GetMainOptionsMenu(hWnd));
+}
+
+static void ShowTrayContextMenu(HWND hWnd, int x, int y)
+{
+	HMENU trayMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDR_TRAYMENU));
+	if (trayMenu == NULL) {
+		LogWin32Error(_T("WARNING"), _T("LoadMenu for tray popup"), GetLastError());
+		return;
+	}
+
+	HMENU popup = GetSubMenu(trayMenu, 0);
+	if (popup == NULL) {
+		DestroyMenu(trayMenu);
+		LOG_EVENT(_T("WARNING"), _T("Tray popup menu resource is missing its root submenu"));
+		return;
+	}
+
+	ApplyMenuChecks(popup);
+	SetForegroundWindow(hWnd);
+	TrackPopupMenu(popup, TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON, x, y, 0, hWnd, NULL);
+	DestroyMenu(trayMenu);
+	PostMessage(hWnd, WM_NULL, 0, 0);
 }
 
 void ShowMainWindow(HWND hWnd)
@@ -153,7 +179,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 	AddTrayIcon(hWnd);
 	SetTimer(hWnd, PERSIST_TIMER_ID, PERSIST_TIMER_MS, PersistTimerCallback);
-	UpdateMenuChecks(hWnd);
+	UpdateMainMenuChecks(hWnd);
 	UpdateLoggingUiState();
 	UpdateStatusPanel();
 	RECT clientRect = {};
@@ -194,9 +220,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			case IDM_SHOWWINDOW:
 				ShowMainWindow(hWnd);
 				break;
+			case IDM_HIDEWINDOW:
+				ShowWindow(hWnd, SW_HIDE);
+				break;
 			case IDM_RESTORE_ON_DISCONNECT:
 				InstanceData::g_Instance.RestoreOnDisconnect = !InstanceData::g_Instance.RestoreOnDisconnect;
-				UpdateMenuChecks(hWnd);
+				UpdateMainMenuChecks(hWnd);
 				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 					InstanceData::g_Instance.PersistPositions,
 					InstanceData::g_Instance.LoggingEnabled);
@@ -209,14 +238,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				{
 					BOOL enabled = IsAutostartEnabled();
 					SetAutostart(!enabled);
-					UpdateMenuChecks(hWnd);
+					UpdateMainMenuChecks(hWnd);
 					LOG_EVENT(_T("INFO"), !enabled ? _T("Autostart enabled") : _T("Autostart disabled"));
 					UpdateStatusPanel();
 				}
 				break;
 			case IDM_PERSIST_POSITIONS:
 				InstanceData::g_Instance.PersistPositions = !InstanceData::g_Instance.PersistPositions;
-				UpdateMenuChecks(hWnd);
+				UpdateMainMenuChecks(hWnd);
 				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 					InstanceData::g_Instance.PersistPositions,
 					InstanceData::g_Instance.LoggingEnabled);
@@ -237,7 +266,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					InstanceData::g_Instance.LoggingEnabled = TRUE;
 					LogEvent(_T("INFO"), _T("Event logging enabled"));
 				}
-				UpdateMenuChecks(hWnd);
+				UpdateMainMenuChecks(hWnd);
 				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 					InstanceData::g_Instance.PersistPositions,
 					InstanceData::g_Instance.LoggingEnabled);
@@ -284,10 +313,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			else if (nMsg == WM_CONTEXTMENU || nMsg == WM_RBUTTONUP) {
 				int x = GET_X_LPARAM(wParam);
 				int y = GET_Y_LPARAM(wParam);
-				HMENU menu = GetNotifyMenu(hWnd);
-				SetForegroundWindow(hWnd);
-				TrackPopupMenu(menu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON, x, y, 0, hWnd, NULL);
-				PostMessage(hWnd, WM_NULL, 0, 0);
+				ShowTrayContextMenu(hWnd, x, y);
 			}
 		}
 		break;

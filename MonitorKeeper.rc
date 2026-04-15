@@ -40,18 +40,33 @@ IDI_MONITORKEEPER       ICON                    "Icon_v2.ico"
 
 IDC_MONITORKEEPER MENU
 BEGIN
-    POPUP "&File"
-    BEGIN
-        MENUITEM "E&xit",                       IDM_EXIT
-    END
-    POPUP "Notify"
+    POPUP "&Options"
     BEGIN
         MENUITEM "&About ...",                  IDM_ABOUT
-        MENUITEM "Show Window...",              IDM_SHOWWINDOW
         MENUITEM SEPARATOR
         MENUITEM "Restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
         MENUITEM "Start with &Windows",         IDM_AUTOSTART
-        MENUITEM "&Persist Positions to Disk",   IDM_PERSIST_POSITIONS
+        MENUITEM "&Persist Positions to Disk",  IDM_PERSIST_POSITIONS
+        MENUITEM "Enable Event &Logging",       IDM_ENABLE_LOGGING, CHECKED
+        MENUITEM SEPARATOR
+        MENUITEM "C&lear Log",                  IDM_CLEAR_LOG
+        MENUITEM "Copy &All Log",               IDM_COPY_ALL_LOG
+        MENUITEM SEPARATOR
+        MENUITEM "&Hide Window",                IDM_HIDEWINDOW
+        MENUITEM "E&xit",                       IDM_EXIT
+    END
+END
+
+IDR_TRAYMENU MENU
+BEGIN
+    POPUP "MonitorKeeper"
+    BEGIN
+        MENUITEM "Show Window...",              IDM_SHOWWINDOW
+        MENUITEM "&About ...",                  IDM_ABOUT
+        MENUITEM SEPARATOR
+        MENUITEM "Restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
+        MENUITEM "Start with &Windows",         IDM_AUTOSTART
+        MENUITEM "&Persist Positions to Disk",  IDM_PERSIST_POSITIONS
         MENUITEM "Enable Event &Logging",       IDM_ENABLE_LOGGING, CHECKED
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_EXIT
