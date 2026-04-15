@@ -3,16 +3,32 @@
 #include "LoggingUI.h"
 
 #define AUTOSTART_REG_KEY _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-#define AUTOSTART_VALUE _T("MonitorKeeper")
-#define SETTINGS_REG_KEY _T("Software\\MonitorKeeper")
+#define AUTOSTART_VALUE _T("MonWinPosKeeper")
+#define LEGACY_AUTOSTART_VALUE _T("MonitorKeeper")
+#define SETTINGS_REG_KEY _T("Software\\MonWinPosKeeper")
+#define LEGACY_SETTINGS_REG_KEY _T("Software\\MonitorKeeper")
+#define APPDATA_DIR_NAME _T("MonWinPosKeeper")
+#define LEGACY_APPDATA_DIR_NAME _T("MonitorKeeper")
 #define PERSIST_MAGIC_V2 0x4D4B5032
+
+static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
+{
+	if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path)))
+		return FALSE;
+	StringCchCat(path, cch, _T("\\"));
+	StringCchCat(path, cch, folderName);
+	CreateDirectory(path, NULL);
+	StringCchCat(path, cch, _T("\\positions.dat"));
+	return TRUE;
+}
 
 BOOL IsAutostartEnabled()
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
 		return FALSE;
-	BOOL exists = (RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
+	BOOL exists = (RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) ||
+		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
 	RegCloseKey(hKey);
 	return exists;
 }
@@ -34,11 +50,16 @@ void SetAutostart(BOOL enable)
 		if (status != ERROR_SUCCESS) {
 			LogWin32Error(_T("WARNING"), _T("RegSetValueEx for autostart"), status);
 		}
+		RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
 	}
 	else {
 		status = RegDeleteValue(hKey, AUTOSTART_VALUE);
 		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
 			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for autostart"), status);
+		}
+		status = RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
+		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
+			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for legacy autostart"), status);
 		}
 	}
 	RegCloseKey(hKey);
@@ -71,8 +92,10 @@ void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingE
 void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled)
 {
 	HKEY hKey;
-	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
-		return;
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+		if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+			return;
+	}
 	DWORD val;
 	DWORD size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("RestoreOnDisconnect"), NULL, NULL,
@@ -98,12 +121,7 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 
 BOOL InstanceData::GetPersistPath(TCHAR* path, DWORD cch)
 {
-	if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path)))
-		return FALSE;
-	StringCchCat(path, cch, _T("\\MonitorKeeper"));
-	CreateDirectory(path, NULL);
-	StringCchCat(path, cch, _T("\\positions.dat"));
-	return TRUE;
+	return GetPersistPathForFolder(APPDATA_DIR_NAME, path, cch);
 }
 
 BOOL InstanceData::SaveToDisk(LPCTSTR reason)
@@ -174,7 +192,15 @@ void InstanceData::LoadFromDisk()
 	}
 
 	HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE) return;
+	if (hFile == INVALID_HANDLE_VALUE) {
+		if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME, path, MAX_PATH)) {
+			return;
+		}
+		hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hFile == INVALID_HANDLE_VALUE) {
+			return;
+		}
+	}
 
 	FILETIME lastWriteUtc = {};
 	GetFileTime(hFile, NULL, NULL, &lastWriteUtc);

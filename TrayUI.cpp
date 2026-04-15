@@ -82,7 +82,7 @@ void AddTrayIcon(HWND hWnd)
 	icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	icon.uCallbackMessage = WM_USER + 100;
 	icon.hIcon = LoadAppIcon(hInst, TRUE);
-	lstrcpy(icon.szTip, _T("Monitor Keeper"));
+	lstrcpy(icon.szTip, _T("MonWinPosKeeper"));
 	Shell_NotifyIcon(NIM_DELETE, &icon);
 	if (!Shell_NotifyIcon(NIM_ADD, &icon)) {
 		LogWin32Error(_T("WARNING"), _T("Shell_NotifyIcon(NIM_ADD)"), GetLastError());
@@ -185,7 +185,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	RECT clientRect = {};
 	GetClientRect(hWnd, &clientRect);
 	LayoutMainWindow(hWnd, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
-	LOG_EVENT(_T("INFO"), _T("MonitorKeeper started"));
+	LOG_EVENT(_T("INFO"), _T("MonWinPosKeeper started"));
 
 	return TRUE;
 }
