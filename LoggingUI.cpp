@@ -4,6 +4,7 @@
 
 #include "MonitorConfig.h"
 #include "Persistence.h"
+#include "WindowTracking.h"
 
 BOOL ShouldLogEvents()
 {
@@ -246,6 +247,194 @@ void ShowLogContextMenu(HWND hWnd, int x, int y)
 	PostMessage(hWnd, WM_NULL, 0, 0);
 }
 
+static void CaptureInspectorSelection()
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hConfigList == NULL || inst._InspectorConfigHashes.empty()) {
+		return;
+	}
+
+	int selection = (int)SendMessage(inst._hConfigList, LB_GETCURSEL, 0, 0);
+	if (selection != LB_ERR && selection >= 0 && selection < (int)inst._InspectorConfigHashes.size()) {
+		inst._InspectorSelectedConfigHash = inst._InspectorConfigHashes[(size_t)selection];
+	}
+}
+
+static void CollectKnownConfigHashes(std::vector<UINT64>& configHashes)
+{
+	auto& inst = InstanceData::g_Instance;
+	configHashes.clear();
+
+	for (const auto& pair : inst._ConfigIds) {
+		configHashes.push_back(pair.first);
+	}
+	for (const auto& pair : inst._ConfigSnapshots) {
+		configHashes.push_back(pair.first);
+	}
+	for (const auto& wd : inst._WindowData) {
+		for (const auto& placement : wd.m_placements) {
+			configHashes.push_back(placement.first);
+		}
+	}
+
+	std::sort(configHashes.begin(), configHashes.end(), [&](UINT64 left, UINT64 right) {
+		int leftId = inst.GetOrCreateConfigId(left);
+		int rightId = inst.GetOrCreateConfigId(right);
+		if (leftId != rightId) {
+			return leftId < rightId;
+		}
+		return left < right;
+	});
+	configHashes.erase(std::unique(configHashes.begin(), configHashes.end()), configHashes.end());
+}
+
+static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hConfigSummary == NULL || inst._hPlacementList == NULL) {
+		return;
+	}
+
+	SendMessage(inst._hPlacementList, WM_SETREDRAW, FALSE, 0);
+	SendMessage(inst._hPlacementList, LB_RESETCONTENT, 0, 0);
+
+	if (selectedHash == 0) {
+		SetWindowText(inst._hConfigSummary, _T("No saved layout snapshots yet."));
+		SendMessage(inst._hPlacementList, WM_SETREDRAW, TRUE, 0);
+		InvalidateRect(inst._hPlacementList, NULL, TRUE);
+		return;
+	}
+
+	ConfigSnapshotInfo snapshotInfo;
+	BOOL hasSnapshot = inst.TryGetSnapshotInfo(selectedHash, snapshotInfo);
+	TCHAR lastSaved[32];
+	if (hasSnapshot) {
+		FormatFileTimeLocal(&snapshotInfo.lastSavedUtc, lastSaved, _countof(lastSaved));
+	}
+	else {
+		StringCchCopy(lastSaved, _countof(lastSaved), _T("unknown"));
+	}
+
+	TCHAR monitorSummary[1024];
+	if (selectedHash == inst._ConfigHash) {
+		GetCurrentMonitorSummary(monitorSummary, _countof(monitorSummary));
+	}
+	else {
+		StringCchCopy(monitorSummary, _countof(monitorSummary),
+			_T("Unavailable for historical configs (only the current live monitor layout is tracked in detail)."));
+	}
+
+	TCHAR summary[1400];
+	StringCchPrintf(summary, _countof(summary),
+		_T("Config #%d\r\n")
+		_T("Hash: 0x%016I64X\r\n")
+		_T("Current config: %s\r\n")
+		_T("Stored placements: %d\r\n")
+		_T("Snapshot window count: %lu\r\n")
+		_T("Last capture: %s\r\n")
+		_T("Monitor summary: %s"),
+		inst.GetOrCreateConfigId(selectedHash),
+		selectedHash,
+		selectedHash == inst._ConfigHash ? _T("yes") : _T("no"),
+		inst.CountPlacementsForConfig(selectedHash),
+		hasSnapshot ? snapshotInfo.windowCount : 0,
+		lastSaved,
+		monitorSummary);
+	SetWindowText(inst._hConfigSummary, summary);
+
+	for (const auto& wd : inst._WindowData) {
+		auto it = wd.m_placements.find(selectedHash);
+		if (it == wd.m_placements.end()) {
+			continue;
+		}
+
+		const WINDOWPLACEMENT& place = it->second;
+		TCHAR identity[512];
+		TCHAR line[1400];
+		FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
+		StringCchPrintf(line, _countof(line),
+			_T("[%s] (%d,%d %dx%d) %s | %s"),
+			(wd.m_hwnd != NULL && IsWindow(wd.m_hwnd) && wd.m_nUnusedCount <= 2) ? _T("live") : _T("stale"),
+			place.rcNormalPosition.left,
+			place.rcNormalPosition.top,
+			place.rcNormalPosition.right - place.rcNormalPosition.left,
+			place.rcNormalPosition.bottom - place.rcNormalPosition.top,
+			TranslateShowCommand(place.showCmd),
+			identity);
+		SendMessage(inst._hPlacementList, LB_ADDSTRING, 0, (LPARAM)line);
+	}
+
+	if (SendMessage(inst._hPlacementList, LB_GETCOUNT, 0, 0) == 0) {
+		SendMessage(inst._hPlacementList, LB_ADDSTRING, 0,
+			(LPARAM)_T("No stored window placements for this config."));
+	}
+
+	SendMessage(inst._hPlacementList, WM_SETREDRAW, TRUE, 0);
+	InvalidateRect(inst._hPlacementList, NULL, TRUE);
+}
+
+void RefreshPlacementInspector()
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hConfigList == NULL || inst._hConfigSummary == NULL || inst._hPlacementList == NULL) {
+		return;
+	}
+
+	CaptureInspectorSelection();
+
+	std::vector<UINT64> configHashes;
+	CollectKnownConfigHashes(configHashes);
+	inst._InspectorConfigHashes = configHashes;
+
+	SendMessage(inst._hConfigList, WM_SETREDRAW, FALSE, 0);
+	SendMessage(inst._hConfigList, LB_RESETCONTENT, 0, 0);
+
+	for (UINT64 configHash : configHashes) {
+		TCHAR line[256];
+		ConfigSnapshotInfo snapshotInfo;
+		BOOL hasSnapshot = inst.TryGetSnapshotInfo(configHash, snapshotInfo);
+		TCHAR lastSaved[32];
+		if (hasSnapshot) {
+			FormatFileTimeLocal(&snapshotInfo.lastSavedUtc, lastSaved, _countof(lastSaved));
+		}
+		else {
+			StringCchCopy(lastSaved, _countof(lastSaved), _T("unknown"));
+		}
+
+		StringCchPrintf(line, _countof(line),
+			_T("#%d  0x%016I64X  placements=%d  last=%s%s"),
+			inst.GetOrCreateConfigId(configHash),
+			configHash,
+			inst.CountPlacementsForConfig(configHash),
+			lastSaved,
+			configHash == inst._ConfigHash ? _T("  [current]") : _T(""));
+		SendMessage(inst._hConfigList, LB_ADDSTRING, 0, (LPARAM)line);
+	}
+
+	int selectedIndex = LB_ERR;
+	if (!configHashes.empty()) {
+		UINT64 preferredHash = inst._InspectorSelectedConfigHash != 0 ? inst._InspectorSelectedConfigHash : inst._ConfigHash;
+		for (size_t index = 0; index < configHashes.size(); ++index) {
+			if (configHashes[index] == preferredHash) {
+				selectedIndex = (int)index;
+				break;
+			}
+		}
+		if (selectedIndex == LB_ERR) {
+			selectedIndex = 0;
+		}
+		inst._InspectorSelectedConfigHash = configHashes[(size_t)selectedIndex];
+		SendMessage(inst._hConfigList, LB_SETCURSEL, selectedIndex, 0);
+	}
+	else {
+		inst._InspectorSelectedConfigHash = 0;
+	}
+
+	SendMessage(inst._hConfigList, WM_SETREDRAW, TRUE, 0);
+	InvalidateRect(inst._hConfigList, NULL, TRUE);
+	UpdatePlacementInspectorDetails(inst._InspectorSelectedConfigHash);
+}
+
 void UpdateStatusPanel()
 {
 	HWND hStatus = InstanceData::g_Instance._hStatus;
@@ -300,4 +489,5 @@ void UpdateStatusPanel()
 		inst.LoggingEnabled ? _T("ON") : _T("OFF"));
 
 	SetWindowText(hStatus, text);
+	RefreshPlacementInspector();
 }

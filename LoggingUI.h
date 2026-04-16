@@ -7,6 +7,7 @@ void LogEvent(LPCTSTR type, LPCTSTR detail);
 void LogEventFormat(LPCTSTR type, LPCTSTR format, ...);
 void UpdateLoggingUiState();
 void UpdateStatusPanel();
+void RefreshPlacementInspector();
 void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchBuffer);
 void FormatWin32Error(DWORD error, TCHAR* buffer, size_t cchBuffer);
 void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error);

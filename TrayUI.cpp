@@ -13,6 +13,61 @@ static HMENU GetMainOptionsMenu(HWND hWnd)
 	return GetSubMenu(menu, 0);
 }
 
+enum MainWindowTabPage {
+	MainWindowTabLog = 0,
+	MainWindowTabLayouts = 1,
+};
+
+static int GetSelectedMainTab()
+{
+	HWND hTab = InstanceData::g_Instance._hMainTab;
+	if (hTab == NULL) {
+		return MainWindowTabLog;
+	}
+
+	int selection = TabCtrl_GetCurSel(hTab);
+	return selection >= 0 ? selection : MainWindowTabLog;
+}
+
+static RECT GetMainTabContentRect(HWND hWnd)
+{
+	RECT rect = { 4, STATUS_HEIGHT + 8, 4, STATUS_HEIGHT + 8 };
+	HWND hTab = InstanceData::g_Instance._hMainTab;
+	if (hTab == NULL) {
+		return rect;
+	}
+
+	GetClientRect(hTab, &rect);
+	TabCtrl_AdjustRect(hTab, FALSE, &rect);
+	MapWindowPoints(hTab, hWnd, reinterpret_cast<LPPOINT>(&rect), 2);
+	return rect;
+}
+
+static void UpdateMainTabVisibility(HWND hWnd)
+{
+	UNREFERENCED_PARAMETER(hWnd);
+	int selectedTab = GetSelectedMainTab();
+	BOOL showLog = selectedTab == MainWindowTabLog ? TRUE : FALSE;
+	BOOL showLayouts = selectedTab == MainWindowTabLayouts ? TRUE : FALSE;
+
+	if (InstanceData::g_Instance._hLogList) {
+		ShowWindow(InstanceData::g_Instance._hLogList, showLog ? SW_SHOW : SW_HIDE);
+	}
+	if (InstanceData::g_Instance._hConfigList) {
+		ShowWindow(InstanceData::g_Instance._hConfigList, showLayouts ? SW_SHOW : SW_HIDE);
+	}
+	if (InstanceData::g_Instance._hConfigSummary) {
+		ShowWindow(InstanceData::g_Instance._hConfigSummary, showLayouts ? SW_SHOW : SW_HIDE);
+	}
+	if (InstanceData::g_Instance._hPlacementList) {
+		ShowWindow(InstanceData::g_Instance._hPlacementList, showLayouts ? SW_SHOW : SW_HIDE);
+	}
+
+	if (showLayouts) {
+		RefreshPlacementInspector();
+	}
+}
+
 static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 {
 	int iconX = cx - 4 - STATUS_ICON_SIZE;
@@ -26,8 +81,50 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 		MoveWindow(InstanceData::g_Instance._hStatus, 4, 4, statusWidth, STATUS_HEIGHT, TRUE);
 	if (InstanceData::g_Instance._hStatusIcon)
 		MoveWindow(InstanceData::g_Instance._hStatusIcon, iconX, iconY, STATUS_ICON_SIZE, STATUS_ICON_SIZE, TRUE);
-	if (InstanceData::g_Instance._hLogList)
-		MoveWindow(InstanceData::g_Instance._hLogList, 4, STATUS_HEIGHT + 8, cx - 8, cy - STATUS_HEIGHT - 12, TRUE);
+
+	int tabTop = STATUS_HEIGHT + 8;
+	int tabHeight = cy - tabTop - 4;
+	if (tabHeight < 80) {
+		tabHeight = 80;
+	}
+	if (InstanceData::g_Instance._hMainTab) {
+		MoveWindow(InstanceData::g_Instance._hMainTab, 4, tabTop, cx - 8, tabHeight, TRUE);
+	}
+
+	RECT contentRect = GetMainTabContentRect(hWnd);
+	int contentWidth = contentRect.right - contentRect.left;
+	int contentHeight = contentRect.bottom - contentRect.top;
+	if (contentWidth < 100) {
+		contentWidth = 100;
+	}
+	if (contentHeight < 80) {
+		contentHeight = 80;
+	}
+
+	if (InstanceData::g_Instance._hLogList) {
+		MoveWindow(InstanceData::g_Instance._hLogList,
+			contentRect.left, contentRect.top, contentWidth, contentHeight, TRUE);
+	}
+
+	int leftWidth = min(260, max(180, contentWidth / 3));
+	int rightWidth = contentWidth - leftWidth - 8;
+	if (rightWidth < 120) {
+		rightWidth = 120;
+	}
+	int summaryHeight = min(96, max(72, contentHeight / 4));
+	if (InstanceData::g_Instance._hConfigList) {
+		MoveWindow(InstanceData::g_Instance._hConfigList,
+			contentRect.left, contentRect.top, leftWidth, contentHeight, TRUE);
+	}
+	if (InstanceData::g_Instance._hConfigSummary) {
+		MoveWindow(InstanceData::g_Instance._hConfigSummary,
+			contentRect.left + leftWidth + 8, contentRect.top, rightWidth, summaryHeight, TRUE);
+	}
+	if (InstanceData::g_Instance._hPlacementList) {
+		MoveWindow(InstanceData::g_Instance._hPlacementList,
+			contentRect.left + leftWidth + 8, contentRect.top + summaryHeight + 8,
+			rightWidth, contentHeight - summaryHeight - 8, TRUE);
+	}
 }
 
 static void ApplyMenuChecks(HMENU menu)
@@ -124,7 +221,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 	INITCOMMONCONTROLSEX icex = {};
 	icex.dwSize = sizeof(icex);
-	icex.dwICC = ICC_STANDARD_CLASSES;
+	icex.dwICC = ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
 	InitCommonControlsEx(&icex);
 
 	HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
@@ -135,6 +232,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	}
 
 	InstanceData::g_Instance._MainWnd = hWnd;
+	InstanceData::g_Instance._hMainTab = CreateWindowEx(0, WC_TABCONTROL, _T(""),
+		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+		4, STATUS_HEIGHT + 8, 690, 400,
+		hWnd, (HMENU)IDC_MAIN_TAB, hInstance, NULL);
 	InstanceData::g_Instance._hStatus = CreateWindowEx(0, _T("STATIC"), _T(""),
 		WS_CHILD | WS_VISIBLE | SS_LEFT,
 		4, 4, 646, STATUS_HEIGHT,
@@ -148,11 +249,35 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		4, STATUS_HEIGHT + 8, 690, 400,
 		hWnd, NULL, hInstance, NULL);
+	InstanceData::g_Instance._hConfigList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
+		4, STATUS_HEIGHT + 8, 220, 400,
+		hWnd, (HMENU)IDC_CONFIG_LIST, hInstance, NULL);
+	InstanceData::g_Instance._hConfigSummary = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
+		232, STATUS_HEIGHT + 8, 462, 92,
+		hWnd, (HMENU)IDC_CONFIG_SUMMARY, hInstance, NULL);
+	InstanceData::g_Instance._hPlacementList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
+		232, STATUS_HEIGHT + 108, 462, 296,
+		hWnd, (HMENU)IDC_PLACEMENT_LIST, hInstance, NULL);
 
-	if (InstanceData::g_Instance._hStatus == NULL || InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL) {
+	if (InstanceData::g_Instance._hMainTab == NULL || InstanceData::g_Instance._hStatus == NULL ||
+		InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL ||
+		InstanceData::g_Instance._hConfigList == NULL || InstanceData::g_Instance._hConfigSummary == NULL ||
+		InstanceData::g_Instance._hPlacementList == NULL) {
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
+
+	TCITEM tie = {};
+	tie.mask = TCIF_TEXT;
+	tie.pszText = const_cast<LPTSTR>(_T("Log"));
+	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabLog, &tie);
+	tie.pszText = const_cast<LPTSTR>(_T("Layouts"));
+	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabLayouts, &tie);
+	TabCtrl_SetCurSel(InstanceData::g_Instance._hMainTab, MainWindowTabLog);
+	InstanceData::g_Instance._InspectorSelectedConfigHash = 0;
 	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON,
 		(LPARAM)LoadAppIconSized(hInstance, STATUS_ICON_SIZE, STATUS_ICON_SIZE));
 
@@ -165,9 +290,18 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
 		FIXED_PITCH | FF_MODERN, _T("Consolas"));
 	SendMessage(InstanceData::g_Instance._hStatus, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hMainTab, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, WM_SETFONT,
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hConfigList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hConfigSummary, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hPlacementList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
+	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 4096, 0);
+	SendMessage(InstanceData::g_Instance._hPlacementList, LB_SETHORIZONTALEXTENT, 8192, 0);
 
 	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 		InstanceData::g_Instance.PersistPositions,
@@ -188,6 +322,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	RECT clientRect = {};
 	GetClientRect(hWnd, &clientRect);
 	LayoutMainWindow(hWnd, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
+	UpdateMainTabVisibility(hWnd);
 	LOG_EVENT(_T("INFO"), _T("MonWinPosKeeper started"));
 
 	return TRUE;
@@ -213,6 +348,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_COMMAND:
 		{
+			if ((HWND)lParam == InstanceData::g_Instance._hConfigList && HIWORD(wParam) == LBN_SELCHANGE) {
+				RefreshPlacementInspector();
+				return 0;
+			}
+
 			int wmId = LOWORD(wParam);
 			switch (wmId)
 			{
@@ -298,6 +438,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			default:
 				return DefWindowProc(hWnd, message, wParam, lParam);
 			}
+		}
+		break;
+	case WM_NOTIFY:
+		if (((LPNMHDR)lParam)->idFrom == IDC_MAIN_TAB && ((LPNMHDR)lParam)->code == TCN_SELCHANGE) {
+			UpdateMainTabVisibility(hWnd);
+			return 0;
 		}
 		break;
 	case WM_CLOSE:

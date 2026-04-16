@@ -75,9 +75,13 @@ public:
 	UINT64 _ConfigHash;
 	int _NumMonitors;
 	HWND _MainWnd;
+	HWND _hMainTab;
 	HWND _hStatus;
 	HWND _hStatusIcon;
 	HWND _hLogList;
+	HWND _hConfigList;
+	HWND _hConfigSummary;
+	HWND _hPlacementList;
 	HFONT _hLogFont;
 	BOOL InChangingState;
 	BOOL RestoreOnDisconnect;
@@ -87,6 +91,8 @@ public:
 	int _RestoreRetryCount;
 	BOOL _AwaitingRestoreRetry;
 	HANDLE _MutexSingleInstance;
+	UINT64 _InspectorSelectedConfigHash;
+	std::vector<UINT64> _InspectorConfigHashes;
 	FILETIME _LastCaptureUtc;
 	FILETIME _LastPersistUtc;
 };

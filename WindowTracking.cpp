@@ -133,9 +133,13 @@ InstanceData::InstanceData()
 	_NextConfigId = 1;
 	_ConfigSnapshots.clear();
 	_MainWnd = NULL;
+	_hMainTab = NULL;
 	_hStatus = NULL;
 	_hStatusIcon = NULL;
 	_hLogList = NULL;
+	_hConfigList = NULL;
+	_hConfigSummary = NULL;
+	_hPlacementList = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
 	RestoreOnDisconnect = true;
@@ -143,6 +147,7 @@ InstanceData::InstanceData()
 	LoggingEnabled = true;
 	_RestoreRetryCount = 0;
 	_AwaitingRestoreRetry = FALSE;
+	_InspectorSelectedConfigHash = 0;
 	_LastCaptureUtc.dwLowDateTime = 0;
 	_LastCaptureUtc.dwHighDateTime = 0;
 	_LastPersistUtc.dwLowDateTime = 0;
@@ -167,6 +172,8 @@ void InstanceData::Shutdown()
 	_ConfigIds.clear();
 	_NextConfigId = 1;
 	_ConfigSnapshots.clear();
+	_InspectorConfigHashes.clear();
+	_InspectorSelectedConfigHash = 0;
 
 	if (_hLogFont != NULL)
 	{
