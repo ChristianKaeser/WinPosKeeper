@@ -206,6 +206,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		KillTimer(hWnd, CAPTURE_TIMER_ID);
 		KillTimer(hWnd, DISPLAY_SETTLE_TIMER_ID);
+		KillTimer(hWnd, VERIFY_TIMER_ID);
+		CancelPendingRestores();
 		InstanceData::g_Instance.InChangingState = true;
 		SetTimer(hWnd, DISPLAY_SETTLE_TIMER_ID, DISPLAY_SETTLE_MS, TimerCallback);
 		break;
@@ -330,7 +332,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_TIMER:
 		if (wParam == VERIFY_TIMER_ID) {
 			KillTimer(hWnd, VERIFY_TIMER_ID);
-			VerifyRestoredWindows();
+			if (InstanceData::g_Instance._AwaitingRestoreRetry) {
+				RetryPendingRestores();
+			}
+			else {
+				VerifyRestoredWindows();
+			}
 		}
 		break;
 	case WM_PAINT:

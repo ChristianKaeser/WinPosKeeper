@@ -10,6 +10,8 @@ SavedWindowData::SavedWindowData()
 	m_wndClass[0] = '\0';
 	m_hwnd = NULL;
 	m_nUnusedCount = 1;
+	m_lastRestoreError = ERROR_SUCCESS;
+	m_retryPending = FALSE;
 }
 
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
@@ -41,6 +43,8 @@ BOOL SavedWindowData::HasPlacement(UINT64 configHash) const
 BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 {
 	TCHAR szTempClass[40];
+	m_lastRestoreError = ERROR_SUCCESS;
+	m_retryPending = FALSE;
 	auto it = m_placements.find(configHash);
 	if (it == m_placements.end()) return FALSE;
 
@@ -89,7 +93,8 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	if (place.showCmd == SW_MAXIMIZE) {
 		place.showCmd = SW_SHOWNOACTIVATE;
 		if (!SetWindowPlacement(m_hwnd, &place)) {
-			LogWin32Error(_T("WARNING"), _T("Initial SetWindowPlacement for maximized window"), GetLastError());
+			m_lastRestoreError = GetLastError();
+			LogWin32Error(_T("WARNING"), _T("Initial SetWindowPlacement for maximized window"), m_lastRestoreError);
 		}
 		place.showCmd = SW_MAXIMIZE;
 	}
@@ -103,9 +108,11 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	place.flags |= WPF_ASYNCWINDOWPLACEMENT;
 
 	if (!SetWindowPlacement(m_hwnd, &place)) {
-		LogWin32Error(_T("WARNING"), _T("SetWindowPlacement while restoring window"), GetLastError());
+		m_lastRestoreError = GetLastError();
+		LogWin32Error(_T("WARNING"), _T("SetWindowPlacement while restoring window"), m_lastRestoreError);
 		return FALSE;
 	}
+	m_lastRestoreError = ERROR_SUCCESS;
 	return TRUE;
 }
 
@@ -134,6 +141,8 @@ InstanceData::InstanceData()
 	RestoreOnDisconnect = true;
 	PersistPositions = false;
 	LoggingEnabled = true;
+	_RestoreRetryCount = 0;
+	_AwaitingRestoreRetry = FALSE;
 	_LastCaptureUtc.dwLowDateTime = 0;
 	_LastCaptureUtc.dwHighDateTime = 0;
 	_LastPersistUtc.dwLowDateTime = 0;
@@ -276,6 +285,13 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 		_T("Applying config #%d captured %s with %d stored positions; currently tracking %d window(s)"),
 		configId, timeText, storedPositions, currentWindows);
 	LOG_EVENT(_T("RESTORE"), summary);
+	_RestoreRetryCount = 0;
+	_AwaitingRestoreRetry = FALSE;
+	for (auto& wd : _WindowData)
+	{
+		wd.m_lastRestoreError = ERROR_SUCCESS;
+		wd.m_retryPending = FALSE;
+	}
 
 	for (auto& wd : _WindowData)
 	{
@@ -288,6 +304,18 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 	}
 
 	return attempted;
+}
+
+void CancelPendingRestores()
+{
+	auto& inst = InstanceData::g_Instance;
+	inst._RestoreRetryCount = 0;
+	inst._AwaitingRestoreRetry = FALSE;
+	for (auto& wd : inst._WindowData)
+	{
+		wd.m_retryPending = FALSE;
+		wd.m_lastRestoreError = ERROR_SUCCESS;
+	}
 }
 
 SavedWindowData* InstanceData::FindWindowSlot(HWND hwnd)
@@ -455,16 +483,68 @@ VOID CALLBACK SaveTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dw
 	}
 }
 
+void RetryPendingRestores()
+{
+	auto& inst = InstanceData::g_Instance;
+	UINT64 configHash = inst._ConfigHash;
+	int pendingCount = 0;
+	int successfulCalls = 0;
+	int accessDeniedCount = 0;
+
+	for (auto& wd : inst._WindowData) {
+		if (!wd.m_retryPending) {
+			continue;
+		}
+
+		pendingCount++;
+		wd.m_retryPending = FALSE;
+		if (wd.RestoreWindow(configHash)) {
+			successfulCalls++;
+		}
+		else if (wd.m_lastRestoreError == ERROR_ACCESS_DENIED) {
+			accessDeniedCount++;
+		}
+	}
+
+	inst._AwaitingRestoreRetry = FALSE;
+	if (pendingCount == 0) {
+		inst.InChangingState = false;
+		UpdateStatusPanel();
+		return;
+	}
+
+	if (accessDeniedCount > 0) {
+		LOG_EVENTF(_T("RESTORE"),
+			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded and %d access-denied window(s) will be ignored"),
+			inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, pendingCount, successfulCalls, accessDeniedCount);
+	}
+	else {
+		LOG_EVENTF(_T("RESTORE"),
+			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded"),
+			inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, pendingCount, successfulCalls);
+	}
+
+	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+	UpdateStatusPanel();
+}
+
 void VerifyRestoredWindows()
 {
 	auto& inst = InstanceData::g_Instance;
 	UINT64 configHash = inst._ConfigHash;
-	int warnCount = 0;
+	int mismatchCount = 0;
+	int ignoredAccessDenied = 0;
+	std::vector<std::basic_string<TCHAR>> mismatchDetails;
 	for (auto& wd : inst._WindowData) {
 		if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) continue;
 		auto it = wd.m_placements.find(configHash);
 		if (it == wd.m_placements.end()) continue;
 		if (!IsWindow(wd.m_hwnd)) continue;
+		if (wd.m_lastRestoreError == ERROR_ACCESS_DENIED) {
+			wd.m_retryPending = FALSE;
+			ignoredAccessDenied++;
+			continue;
+		}
 
 		WINDOWPLACEMENT actual = {};
 		actual.length = sizeof(actual);
@@ -492,16 +572,54 @@ void VerifyRestoredWindows()
 				expected.right - expected.left, expected.bottom - expected.top,
 				got.left, got.top,
 				got.right - got.left, got.bottom - got.top);
-			LOG_EVENT(_T("WARNING"), sz);
-			warnCount++;
+			mismatchCount++;
+			wd.m_retryPending = TRUE;
+			mismatchDetails.push_back(sz);
+		}
+		else {
+			wd.m_retryPending = FALSE;
 		}
 	}
-	if (warnCount == 0) {
-		LOG_EVENT(_T("VERIFY"), _T("All windows at expected positions"));
+	if (mismatchCount == 0) {
+		if (ignoredAccessDenied > 0) {
+			LOG_EVENTF(_T("VERIFY"), _T("All retry-eligible windows reached expected positions; %d access-denied window(s) were excluded"),
+				ignoredAccessDenied);
+		}
+		else {
+			LOG_EVENT(_T("VERIFY"), _T("All windows at expected positions"));
+		}
+	}
+	else if (inst._RestoreRetryCount < RESTORE_RETRY_LIMIT) {
+		inst._RestoreRetryCount++;
+		inst._AwaitingRestoreRetry = TRUE;
+		if (ignoredAccessDenied > 0) {
+			LOG_EVENTF(_T("VERIFY"),
+				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d. Ignoring %d access-denied window(s)"),
+				mismatchCount, VERIFY_TIMER_MS / 1000, inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, ignoredAccessDenied);
+		}
+		else {
+			LOG_EVENTF(_T("VERIFY"),
+				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d"),
+				mismatchCount, VERIFY_TIMER_MS / 1000, inst._RestoreRetryCount, RESTORE_RETRY_LIMIT);
+		}
+		SetTimer(inst._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+		UpdateStatusPanel();
+		return;
 	}
 	else {
-		LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position"), warnCount);
+		for (const auto& detail : mismatchDetails) {
+			LOG_EVENT(_T("WARNING"), detail.c_str());
+		}
+		if (ignoredAccessDenied > 0) {
+			LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position; %d access-denied window(s) were excluded"),
+				mismatchCount, ignoredAccessDenied);
+		}
+		else {
+			LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position"), mismatchCount);
+		}
 	}
+	inst._RestoreRetryCount = 0;
+	inst._AwaitingRestoreRetry = FALSE;
 	inst.InChangingState = false;
 	UpdateStatusPanel();
 }

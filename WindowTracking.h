@@ -9,4 +9,6 @@ BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPL
 BOOL CALLBACK SaveWindowsCallback(HWND hwnd, LPARAM lParam);
 void ProcessDesktopWindows();
 VOID CALLBACK SaveTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime);
+void CancelPendingRestores();
+void RetryPendingRestores();
 void VerifyRestoredWindows();

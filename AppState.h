@@ -14,6 +14,7 @@
 #define DISPLAY_SETTLE_MS 2000
 #define VERIFY_TIMER_ID 4
 #define VERIFY_TIMER_MS 2000
+#define RESTORE_RETRY_LIMIT 2
 #define PLACEMENT_TOLERANCE 20
 
 extern HINSTANCE hInst;
@@ -33,6 +34,8 @@ public:
 	SavedWindowData();
 
 	int m_nUnusedCount;
+	DWORD m_lastRestoreError;
+	BOOL m_retryPending;
 	std::map<UINT64, WINDOWPLACEMENT> m_placements;
 	HWND m_hwnd;
 	TCHAR m_wndClass[40];
@@ -81,6 +84,8 @@ public:
 	BOOL PersistPositions;
 	BOOL LoggingEnabled;
 	BOOL AlreadyRunning;
+	int _RestoreRetryCount;
+	BOOL _AwaitingRestoreRetry;
 	HANDLE _MutexSingleInstance;
 	FILETIME _LastCaptureUtc;
 	FILETIME _LastPersistUtc;
