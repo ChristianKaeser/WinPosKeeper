@@ -44,7 +44,7 @@ BEGIN
     BEGIN
         MENUITEM "&About ...",                  IDM_ABOUT
         MENUITEM SEPARATOR
-        MENUITEM "Restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
+        MENUITEM "Also restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
         MENUITEM "Start with &Windows",         IDM_AUTOSTART
         MENUITEM "&Persist Positions to Disk",  IDM_PERSIST_POSITIONS
         MENUITEM "Enable Event &Logging",       IDM_ENABLE_LOGGING, CHECKED
@@ -64,7 +64,7 @@ BEGIN
         MENUITEM "Show Window...",              IDM_SHOWWINDOW
         MENUITEM "&About ...",                  IDM_ABOUT
         MENUITEM SEPARATOR
-        MENUITEM "Restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
+        MENUITEM "Also restore positions when monitors &disconnect", IDM_RESTORE_ON_DISCONNECT, CHECKED
         MENUITEM "Start with &Windows",         IDM_AUTOSTART
         MENUITEM "&Persist Positions to Disk",  IDM_PERSIST_POSITIONS
         MENUITEM "Enable Event &Logging",       IDM_ENABLE_LOGGING, CHECKED

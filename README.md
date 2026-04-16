@@ -1,6 +1,6 @@
 # MonWinPosKeeper
 
-Automatically restores window positions when your monitor configuration changes.
+Automatically restores window positions when your monitor/desktop configuration changes.
 
 MonWinPosKeeper is a continuation of the original MonitorKeeper project by Garr Godfrey.
 
@@ -37,9 +37,10 @@ MonWinPosKeeper runs in the system tray. Right-click the tray icon for options:
 |-----------|-------------|
 | About | Version info |
 | Show Window | Show the main status and event log window |
-| Restore positions when monitors disconnect | When checked, MonWinPosKeeper re-applies saved positions after a monitor disconnects |
+| Also restore positions when monitors disconnect | When checked, MonWinPosKeeper re-applies saved positions after a monitor disconnects |
 | Start with Windows | Toggle autostart at login |
 | Persist Positions to Disk | Save/load positions across restarts |
+| Enable Event Logging | Update the main window event log |
 | Exit | Quit MonWinPosKeeper |
 
 ## Building
