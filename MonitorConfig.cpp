@@ -146,7 +146,7 @@ void ProcessMonitors()
 				LOG_EVENTF(_T("RESTORE"), _T("Config #%d already matches stored placements; no window moves were needed"), newConfigId);
 			}
 		}
-		InstanceData::g_Instance.SaveToDisk(_T("config change"));
+		//InstanceData::g_Instance.SaveToDisk(_T("config change"));
 	}
 	else if (InstanceData::g_Instance.InChangingState)
 	{
