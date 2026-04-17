@@ -82,6 +82,7 @@ public:
 	HWND _hConfigList;
 	HWND _hConfigSummary;
 	HWND _hPlacementList;
+	HWND _hReadmeView;
 	HFONT _hLogFont;
 	BOOL InChangingState;
 	BOOL RestoreOnDisconnect;
@@ -93,6 +94,7 @@ public:
 	HANDLE _MutexSingleInstance;
 	UINT64 _InspectorSelectedConfigHash;
 	std::vector<UINT64> _InspectorConfigHashes;
+	std::basic_string<TCHAR> _ReadmeText;
 	FILETIME _LastCaptureUtc;
 	FILETIME _LastPersistUtc;
 };

@@ -16,6 +16,7 @@ static HMENU GetMainOptionsMenu(HWND hWnd)
 enum MainWindowTabPage {
 	MainWindowTabLog = 0,
 	MainWindowTabLayouts = 1,
+	MainWindowTabReadme = 2,
 };
 
 static int GetSelectedMainTab()
@@ -49,6 +50,7 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	int selectedTab = GetSelectedMainTab();
 	BOOL showLog = selectedTab == MainWindowTabLog ? TRUE : FALSE;
 	BOOL showLayouts = selectedTab == MainWindowTabLayouts ? TRUE : FALSE;
+	BOOL showReadme = selectedTab == MainWindowTabReadme ? TRUE : FALSE;
 
 	if (InstanceData::g_Instance._hLogList) {
 		ShowWindow(InstanceData::g_Instance._hLogList, showLog ? SW_SHOW : SW_HIDE);
@@ -62,9 +64,15 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	if (InstanceData::g_Instance._hPlacementList) {
 		ShowWindow(InstanceData::g_Instance._hPlacementList, showLayouts ? SW_SHOW : SW_HIDE);
 	}
+	if (InstanceData::g_Instance._hReadmeView) {
+		ShowWindow(InstanceData::g_Instance._hReadmeView, showReadme ? SW_SHOW : SW_HIDE);
+	}
 
 	if (showLayouts) {
 		RefreshPlacementInspector();
+	}
+	if (showReadme) {
+		RefreshReadmeView();
 	}
 }
 
@@ -103,6 +111,10 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 
 	if (InstanceData::g_Instance._hLogList) {
 		MoveWindow(InstanceData::g_Instance._hLogList,
+			contentRect.left, contentRect.top, contentWidth, contentHeight, TRUE);
+	}
+	if (InstanceData::g_Instance._hReadmeView) {
+		MoveWindow(InstanceData::g_Instance._hReadmeView,
 			contentRect.left, contentRect.top, contentWidth, contentHeight, TRUE);
 	}
 
@@ -261,11 +273,15 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		232, STATUS_HEIGHT + 108, 462, 296,
 		hWnd, (HMENU)IDC_PLACEMENT_LIST, hInstance, NULL);
+	InstanceData::g_Instance._hReadmeView = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL,
+		4, STATUS_HEIGHT + 8, 690, 400,
+		hWnd, (HMENU)IDC_README_VIEW, hInstance, NULL);
 
 	if (InstanceData::g_Instance._hMainTab == NULL || InstanceData::g_Instance._hStatus == NULL ||
 		InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL ||
 		InstanceData::g_Instance._hConfigList == NULL || InstanceData::g_Instance._hConfigSummary == NULL ||
-		InstanceData::g_Instance._hPlacementList == NULL) {
+		InstanceData::g_Instance._hPlacementList == NULL || InstanceData::g_Instance._hReadmeView == NULL) {
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
@@ -276,6 +292,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabLog, &tie);
 	tie.pszText = const_cast<LPTSTR>(_T("Layouts"));
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabLayouts, &tie);
+	tie.pszText = const_cast<LPTSTR>(_T("README"));
+	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabReadme, &tie);
 	TabCtrl_SetCurSel(InstanceData::g_Instance._hMainTab, MainWindowTabLog);
 	InstanceData::g_Instance._InspectorSelectedConfigHash = 0;
 	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON,
@@ -298,6 +316,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	SendMessage(InstanceData::g_Instance._hConfigSummary, WM_SETFONT,
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 	SendMessage(InstanceData::g_Instance._hPlacementList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hReadmeView, WM_SETFONT,
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
 	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 4096, 0);
@@ -322,6 +342,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	RECT clientRect = {};
 	GetClientRect(hWnd, &clientRect);
 	LayoutMainWindow(hWnd, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
+	RefreshReadmeView();
 	UpdateMainTabVisibility(hWnd);
 	LOG_EVENT(_T("INFO"), _T("MonWinPosKeeper started"));
 

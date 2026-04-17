@@ -140,6 +140,7 @@ InstanceData::InstanceData()
 	_hConfigList = NULL;
 	_hConfigSummary = NULL;
 	_hPlacementList = NULL;
+	_hReadmeView = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
 	RestoreOnDisconnect = true;
@@ -174,6 +175,7 @@ void InstanceData::Shutdown()
 	_ConfigSnapshots.clear();
 	_InspectorConfigHashes.clear();
 	_InspectorSelectedConfigHash = 0;
+	_ReadmeText.clear();
 
 	if (_hLogFont != NULL)
 	{

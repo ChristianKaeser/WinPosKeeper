@@ -373,6 +373,110 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 	InvalidateRect(inst._hPlacementList, NULL, TRUE);
 }
 
+static void NormalizeLineEndings(std::basic_string<TCHAR>& text);
+
+static BOOL DecodeTextBytes(const BYTE* bytes, DWORD byteCount, std::basic_string<TCHAR>& text)
+{
+	if (bytes == NULL || byteCount == 0) {
+		return FALSE;
+	}
+
+	DWORD offset = 0;
+	if (byteCount >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+		offset = 3;
+	}
+
+	int wideLength = MultiByteToWideChar(CP_UTF8, 0,
+		reinterpret_cast<LPCCH>(bytes + offset), (int)(byteCount - offset), NULL, 0);
+	UINT codePage = CP_UTF8;
+	if (wideLength == 0) {
+		codePage = CP_ACP;
+		wideLength = MultiByteToWideChar(codePage, 0,
+			reinterpret_cast<LPCCH>(bytes + offset), (int)(byteCount - offset), NULL, 0);
+	}
+	if (wideLength == 0) {
+		return FALSE;
+	}
+
+	std::wstring wideText((size_t)wideLength, L'\0');
+	if (MultiByteToWideChar(codePage, 0,
+		reinterpret_cast<LPCCH>(bytes + offset), (int)(byteCount - offset),
+		&wideText[0], wideLength) == 0) {
+		return FALSE;
+	}
+
+	text.assign(wideText.begin(), wideText.end());
+	NormalizeLineEndings(text);
+	return TRUE;
+}
+
+static void NormalizeLineEndings(std::basic_string<TCHAR>& text)
+{
+	std::basic_string<TCHAR> normalized;
+	normalized.reserve(text.size() + 32);
+
+	for (size_t index = 0; index < text.size(); ++index) {
+		TCHAR ch = text[index];
+		if (ch == '\r') {
+			normalized.append(_T("\r\n"));
+			if (index + 1 < text.size() && text[index + 1] == '\n') {
+				index++;
+			}
+		}
+		else if (ch == '\n') {
+			normalized.append(_T("\r\n"));
+		}
+		else {
+			normalized.push_back(ch);
+		}
+	}
+
+	text.swap(normalized);
+}
+
+static BOOL TryLoadReadmeResource(std::basic_string<TCHAR>& text)
+{
+	HRSRC hResource = FindResource(hInst, MAKEINTRESOURCE(IDR_EMBEDDED_README), RT_RCDATA);
+	if (hResource == NULL) {
+		return FALSE;
+	}
+
+	DWORD resourceSize = SizeofResource(hInst, hResource);
+	if (resourceSize == 0) {
+		return FALSE;
+	}
+
+	HGLOBAL hLoadedResource = LoadResource(hInst, hResource);
+	if (hLoadedResource == NULL) {
+		return FALSE;
+	}
+
+	const BYTE* bytes = reinterpret_cast<const BYTE*>(LockResource(hLoadedResource));
+	if (bytes == NULL) {
+		return FALSE;
+	}
+
+	return DecodeTextBytes(bytes, resourceSize, text);
+}
+
+void RefreshReadmeView()
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hReadmeView == NULL) {
+		return;
+	}
+
+	if (inst._ReadmeText.empty()) {
+		if (!TryLoadReadmeResource(inst._ReadmeText)) {
+			inst._ReadmeText =
+				_T("The embedded README resource could not be loaded.\r\n\r\n")
+				_T("This build is supposed to carry its README inside the executable so deployment stays a single standalone .exe.");
+		}
+	}
+
+	SetWindowText(inst._hReadmeView, inst._ReadmeText.c_str());
+}
+
 void RefreshPlacementInspector()
 {
 	auto& inst = InstanceData::g_Instance;

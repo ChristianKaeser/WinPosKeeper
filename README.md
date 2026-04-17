@@ -26,6 +26,7 @@ handles any configuration change — not just adding/removing monitors.
   (`%APPDATA%\MonWinPosKeeper\positions.dat`)
 - **Start with Windows** — optional autostart via the system tray menu
 - **Restore on disconnect** — optionally re-apply saved positions after a monitor disappears
+- **Built-in diagnostics** — the main window includes Log, Layouts, and README tabs for inspection and troubleshooting
 - **DPI-aware** — PerMonitorV2 manifest for correct behavior on mixed-DPI setups
 - **Explorer restart resilient** — tray icon re-creates itself if Explorer crashes
 
@@ -36,12 +37,15 @@ MonWinPosKeeper runs in the system tray. Right-click the tray icon for options:
 | Menu item | Description |
 |-----------|-------------|
 | About | Version info |
-| Show Window | Show the main status and event log window |
+| Show Window | Show the main status window with Log, Layouts, and README tabs |
 | Also restore positions when monitors disconnect | When checked, MonWinPosKeeper re-applies saved positions after a monitor disconnects |
 | Start with Windows | Toggle autostart at login |
 | Persist Positions to Disk | Save/load positions across restarts |
 | Enable Event Logging | Update the main window event log |
 | Exit | Quit MonWinPosKeeper |
+
+The **Layouts** tab is a lightweight inspection view for known monitor-layout hashes and their stored window placements.
+The **README** tab shows this markdown file as plain text from an embedded executable resource, without HTML rendering, so deployment remains a single standalone `.exe`.
 
 ## Building
 
