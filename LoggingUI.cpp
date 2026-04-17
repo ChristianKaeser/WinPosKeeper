@@ -63,7 +63,14 @@ void FormatFileTimeLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchB
 	FILETIME localTime = {};
 	SYSTEMTIME st = {};
 	if (FileTimeToLocalFileTime(fileTimeUtc, &localTime) && FileTimeToSystemTime(&localTime, &st)) {
-		StringCchPrintf(buffer, cchBuffer, _T("%02d:%02d:%02d"), st.wHour, st.wMinute, st.wSecond);
+		// If the time is today, only display the time; otherwise time and date:
+		SYSTEMTIME now = {};
+		GetLocalTime(&now);
+		if (st.wYear == now.wYear && st.wMonth == now.wMonth && st.wDay == now.wDay) {
+			StringCchPrintf(buffer, cchBuffer, _T("%02d:%02d:%02d"), st.wHour, st.wMinute, st.wSecond);
+			return;
+		}
+		StringCchPrintf(buffer, cchBuffer, _T("%02d:%02d:%02d %4d-%02d-%02d"), st.wHour, st.wMinute, st.wSecond, st.wYear, st.wMonth, st.wDay);
 	}
 	else {
 		StringCchCopy(buffer, cchBuffer, _T("unknown"));
@@ -335,21 +342,23 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 
 	TCHAR summary[1400];
 	StringCchPrintf(summary, _countof(summary),
-		_T("Config #%d\r\n")
-		_T("Hash: 0x%016I64X\r\n")
-		_T("Current config: %s\r\n")
-		_T("Stored placements: %d\r\n")
-		_T("Snapshot window count: %lu\r\n")
-		_T("Last capture: %s\r\n")
-		_T("Monitor summary: %s"),
+		_T("Config ID/Hash:          #%-3d   0x%016I64X   %s\r\n")
+		_T("Stored/Snapshot Windows: %d / %lu\r\n")
+		_T("Last Saved:              %s\r\n")
+		_T("Desktop Layout:          %s"),
 		inst.GetOrCreateConfigId(selectedHash),
 		selectedHash,
-		selectedHash == inst._ConfigHash ? _T("yes") : _T("no"),
+		selectedHash == inst._ConfigHash ? _T("<current layout>") : _T("<not current layout>"),
 		inst.CountPlacementsForConfig(selectedHash),
 		hasSnapshot ? snapshotInfo.windowCount : 0,
 		lastSaved,
 		monitorSummary);
 	SetWindowText(inst._hConfigSummary, summary);
+	
+	SendMessage(inst._hPlacementList, LB_ADDSTRING, 0,
+		(LPARAM)_T("Status     X   Y     Width Height State          Process / Window Title"));
+	SendMessage(inst._hPlacementList, LB_ADDSTRING, 0,
+		(LPARAM)_T("------  ----- -----  ----- -----  -------------  --------------------------------"));
 
 	for (const auto& wd : inst._WindowData) {
 		auto it = wd.m_placements.find(selectedHash);
@@ -362,7 +371,7 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 		TCHAR line[1400];
 		FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
 		StringCchPrintf(line, _countof(line),
-			_T("[%s] (%d,%d %dx%d) %s | %s"),
+			_T("%-6s %5d |%5d %5d x%5d  %-13s  %s"),
 			(wd.m_hwnd != NULL && IsWindow(wd.m_hwnd) && wd.m_nUnusedCount <= 2) ? _T("live") : _T("stale"),
 			place.rcNormalPosition.left,
 			place.rcNormalPosition.top,
@@ -507,6 +516,7 @@ void RefreshPlacementInspector()
 
 	for (UINT64 configHash : configHashes) {
 		TCHAR line[256];
+		TCHAR configId[16];
 		ConfigSnapshotInfo snapshotInfo;
 		BOOL hasSnapshot = inst.TryGetSnapshotInfo(configHash, snapshotInfo);
 		TCHAR lastSaved[32];
@@ -516,14 +526,15 @@ void RefreshPlacementInspector()
 		else {
 			StringCchCopy(lastSaved, _countof(lastSaved), _T("unknown"));
 		}
+		StringCchPrintf(configId, _countof(configId), _T("#%d"), inst.GetOrCreateConfigId(configHash));
 
 		StringCchPrintf(line, _countof(line),
-			_T("#%d  0x%016I64X  placements=%d  last=%s%s"),
-			inst.GetOrCreateConfigId(configHash),
+			_T("%-3s  %016I64X %4d  %-8s  %s"),
+			configId,
 			configHash,
 			inst.CountPlacementsForConfig(configHash),
 			lastSaved,
-			configHash == inst._ConfigHash ? _T("  [current]") : _T(""));
+			configHash == inst._ConfigHash ? _T("current") : _T(""));
 		SendMessage(inst._hConfigList, LB_ADDSTRING, 0, (LPARAM)line);
 	}
 

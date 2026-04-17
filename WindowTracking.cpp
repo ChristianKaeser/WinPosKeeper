@@ -403,11 +403,11 @@ void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_
 	}
 
 	StringCchPrintf(buffer, cchBuffer,
-		_T("class=\"%s\" pid=%lu title=\"%s\" exe=\"%s\""),
-		className[0] ? className : _T("<unknown>"),
+		_T("pid=%6lu  %-55s | class \"%-25s\" | \"%s\""),
 		processId,
-		title,
-		exePath);
+		exePath,
+		className[0] ? className : _T("<unknown>"),
+		title);
 }
 
 int NormalizeShowCommandForCompare(int showCmd)
