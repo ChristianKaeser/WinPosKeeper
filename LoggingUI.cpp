@@ -288,6 +288,15 @@ static void CollectKnownConfigHashes(std::vector<UINT64>& configHashes)
 	configHashes.erase(std::unique(configHashes.begin(), configHashes.end()), configHashes.end());
 }
 
+static BOOL IsLayoutsViewVisible()
+{
+	auto& inst = InstanceData::g_Instance;
+	return inst._MainWnd != NULL && IsWindowVisible(inst._MainWnd) &&
+		inst._hConfigList != NULL && inst._hConfigSummary != NULL && inst._hPlacementList != NULL &&
+		IsWindowVisible(inst._hConfigList) && IsWindowVisible(inst._hConfigSummary) &&
+		IsWindowVisible(inst._hPlacementList);
+}
+
 static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 {
 	auto& inst = InstanceData::g_Instance;
@@ -481,6 +490,9 @@ void RefreshPlacementInspector()
 {
 	auto& inst = InstanceData::g_Instance;
 	if (inst._hConfigList == NULL || inst._hConfigSummary == NULL || inst._hPlacementList == NULL) {
+		return;
+	}
+	if (!IsLayoutsViewVisible()) {
 		return;
 	}
 
