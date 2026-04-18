@@ -8,17 +8,74 @@
 SavedWindowData::SavedWindowData()
 {
 	m_wndClass[0] = '\0';
+	m_processPath[0] = '\0';
+	m_windowTitle[0] = '\0';
 	m_hwnd = NULL;
 	m_nUnusedCount = 1;
 	m_lastRestoreError = ERROR_SUCCESS;
 	m_retryPending = FALSE;
 }
 
+static void ReadWindowIdentity(HWND hwnd, TCHAR* wndClass, size_t cchWndClass,
+	TCHAR* processPath, size_t cchProcessPath,
+	TCHAR* windowTitle, size_t cchWindowTitle,
+	DWORD* processId)
+{
+	if (wndClass != NULL && cchWndClass > 0) {
+		wndClass[0] = '\0';
+	}
+	if (processPath != NULL && cchProcessPath > 0) {
+		processPath[0] = '\0';
+	}
+	if (windowTitle != NULL && cchWindowTitle > 0) {
+		windowTitle[0] = '\0';
+	}
+	if (processId != NULL) {
+		*processId = 0;
+	}
+
+	if (hwnd == NULL || !IsWindow(hwnd)) {
+		return;
+	}
+
+	if (wndClass != NULL && cchWndClass > 0) {
+		RealGetWindowClass(hwnd, wndClass, (int)cchWndClass);
+	}
+	if (windowTitle != NULL && cchWindowTitle > 0) {
+		GetWindowText(hwnd, windowTitle, (int)cchWindowTitle);
+	}
+
+	DWORD localProcessId = 0;
+	GetWindowThreadProcessId(hwnd, &localProcessId);
+	if (processId != NULL) {
+		*processId = localProcessId;
+	}
+	if (processPath == NULL || cchProcessPath == 0 || localProcessId == 0) {
+		return;
+	}
+
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, localProcessId);
+	if (hProcess == NULL) {
+		StringCchCopy(processPath, cchProcessPath, _T("<access denied>"));
+		return;
+	}
+
+	DWORD cch = (DWORD)cchProcessPath;
+	if (!QueryFullProcessImageName(hProcess, 0, processPath, &cch)) {
+		StringCchCopy(processPath, cchProcessPath, _T("<access denied>"));
+	}
+	CloseHandle(hProcess);
+}
+
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
 {
 	m_hwnd = hwnd;
 	m_nUnusedCount = 0;
-	RealGetWindowClass(hwnd, m_wndClass, sizeof(m_wndClass) / sizeof(TCHAR));
+	ReadWindowIdentity(hwnd,
+		m_wndClass, _countof(m_wndClass),
+		m_processPath, _countof(m_processPath),
+		m_windowTitle, _countof(m_windowTitle),
+		NULL);
 
 	WINDOWPLACEMENT wp = {};
 	wp.length = sizeof(WINDOWPLACEMENT);
@@ -40,6 +97,27 @@ BOOL SavedWindowData::HasPlacement(UINT64 configHash) const
 	return m_placements.find(configHash) != m_placements.end();
 }
 
+int SavedWindowData::MatchIdentityScore(LPCTSTR wndClass, LPCTSTR processPath, LPCTSTR windowTitle) const
+{
+	if (m_wndClass[0] == '\0' || wndClass == NULL || wndClass[0] == '\0' || lstrcmp(m_wndClass, wndClass) != 0) {
+		return 0;
+	}
+
+	int score = 1;
+	if (m_processPath[0] != '\0' && processPath != NULL && processPath[0] != '\0') {
+		if (lstrcmpi(m_processPath, processPath) == 0) {
+			score += 4;
+		}
+	}
+	if (m_windowTitle[0] != '\0' && windowTitle != NULL && windowTitle[0] != '\0') {
+		if (lstrcmp(m_windowTitle, windowTitle) == 0) {
+			score += 3;
+		}
+	}
+
+	return score;
+}
+
 BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 {
 	TCHAR szTempClass[40];
@@ -50,7 +128,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 
 	if (!IsWindow(m_hwnd)) {
 		TCHAR identity[512];
-		FormatWindowIdentity(NULL, m_wndClass, identity, _countof(identity));
+		FormatWindowIdentity(NULL, m_wndClass, m_processPath, m_windowTitle, identity, _countof(identity));
 		LOG_EVENTF(_T("WARNING"), _T("Skipped restore: %s, saved HWND is no longer valid"), identity);
 		return FALSE;
 	}
@@ -72,7 +150,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	RealGetWindowClass(m_hwnd, szTempClass, sizeof(szTempClass) / sizeof(TCHAR));
 	if (lstrcmp(szTempClass, m_wndClass) != 0) {
 		TCHAR identity[512];
-		FormatWindowIdentity(m_hwnd, m_wndClass, identity, _countof(identity));
+		FormatWindowIdentity(m_hwnd, m_wndClass, m_processPath, m_windowTitle, identity, _countof(identity));
 		LOG_EVENTF(_T("WARNING"),
 			_T("Skipped restore: saved class=\"%s\", current class=\"%s\", %s"),
 			m_wndClass, szTempClass, identity);
@@ -81,7 +159,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 
 	WINDOWPLACEMENT place = it->second;
 	TCHAR identity[512];
-	FormatWindowIdentity(m_hwnd, m_wndClass, identity, _countof(identity));
+	FormatWindowIdentity(m_hwnd, m_wndClass, m_processPath, m_windowTitle, identity, _countof(identity));
 	LOG_EVENTF(_T("RESTORE"),
 		_T("%s -> (%d,%d %dx%d) %s"),
 		identity,
@@ -336,7 +414,7 @@ void CancelPendingRestores()
 	}
 }
 
-SavedWindowData* InstanceData::FindWindowSlot(HWND hwnd)
+SavedWindowData* InstanceData::FindWindowSlot(HWND hwnd, LPCTSTR wndClass, LPCTSTR processPath, LPCTSTR windowTitle)
 {
 	for (auto& wd : _WindowData)
 	{
@@ -345,9 +423,43 @@ SavedWindowData* InstanceData::FindWindowSlot(HWND hwnd)
 		}
 	}
 
+	SavedWindowData* bestIdentityMatch = nullptr;
+	SavedWindowData* onlyClassMatch = nullptr;
+	int bestScore = 0;
+	int classMatchCount = 0;
 	for (auto& wd : _WindowData)
 	{
-		if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) {
+		if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2) {
+			continue;
+		}
+
+		int score = wd.MatchIdentityScore(wndClass, processPath, windowTitle);
+		if (score > bestScore) {
+			bestScore = score;
+			bestIdentityMatch = &wd;
+		}
+		if (score == 1) {
+			classMatchCount++;
+			onlyClassMatch = &wd;
+		}
+	}
+	if (bestScore >= 4 && bestIdentityMatch != nullptr) {
+		return bestIdentityMatch;
+	}
+	if (bestScore == 1 && classMatchCount == 1 && onlyClassMatch != nullptr) {
+		return onlyClassMatch;
+	}
+
+	for (auto& wd : _WindowData)
+	{
+		if (wd.m_hwnd == NULL && wd.m_wndClass[0] == '\0' && wd.m_placements.empty()) {
+			return &wd;
+		}
+	}
+
+	for (auto& wd : _WindowData)
+	{
+		if ((wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) && wd.m_placements.empty()) {
 			return &wd;
 		}
 	}
@@ -378,37 +490,34 @@ LPCTSTR TranslateShowCommand(int nShowCmd)
 	}
 }
 
-void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, TCHAR* buffer, size_t cchBuffer)
+void FormatWindowIdentity(HWND hwnd, LPCTSTR fallbackClass, LPCTSTR fallbackProcessPath,
+	LPCTSTR fallbackWindowTitle, TCHAR* buffer, size_t cchBuffer)
 {
 	TCHAR className[256] = _T("");
 	TCHAR title[256] = _T("");
-	TCHAR exePath[MAX_PATH] = _T("<unknown>");
+	TCHAR exePath[MAX_PATH] = _T("");
 	DWORD processId = 0;
 
-	if (hwnd != NULL && IsWindow(hwnd)) {
-		RealGetWindowClass(hwnd, className, _countof(className));
-		GetWindowText(hwnd, title, _countof(title));
-		GetWindowThreadProcessId(hwnd, &processId);
-		if (processId != 0) {
-			HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
-			if (hProcess != NULL) {
-				DWORD cch = _countof(exePath);
-				if (!QueryFullProcessImageName(hProcess, 0, exePath, &cch)) {
-					StringCchCopy(exePath, _countof(exePath), _T("<access denied>"));
-				}
-				CloseHandle(hProcess);
-			}
-			else {
-				StringCchCopy(exePath, _countof(exePath), _T("<access denied>"));
-			}
-		}
-	}
+	ReadWindowIdentity(hwnd,
+		className, _countof(className),
+		exePath, _countof(exePath),
+		title, _countof(title),
+		&processId);
 
 	if (className[0] == '\0' && fallbackClass != NULL) {
 		StringCchCopy(className, _countof(className), fallbackClass);
 	}
+	if (exePath[0] == '\0' && fallbackProcessPath != NULL && fallbackProcessPath[0] != '\0') {
+		StringCchCopy(exePath, _countof(exePath), fallbackProcessPath);
+	}
+	if (title[0] == '\0' && fallbackWindowTitle != NULL && fallbackWindowTitle[0] != '\0') {
+		StringCchCopy(title, _countof(title), fallbackWindowTitle);
+	}
 	if (title[0] == '\0') {
 		StringCchCopy(title, _countof(title), _T("<untitled>"));
+	}
+	if (exePath[0] == '\0') {
+		StringCchCopy(exePath, _countof(exePath), _T("<unknown>"));
 	}
 
 	StringCchPrintf(buffer, cchBuffer,
@@ -463,7 +572,15 @@ BOOL CALLBACK SaveWindowsCallback(HWND hwnd, LPARAM lParam)
 			(dwExStyle & WS_EX_APPWINDOW) != 0) &&
 			(dwExStyle & (WS_EX_NOACTIVATE)) == 0)
 		{
-			SavedWindowData* pData = InstanceData::g_Instance.FindWindowSlot(hwnd);
+			TCHAR wndClass[40];
+			TCHAR processPath[MAX_PATH];
+			TCHAR windowTitle[256];
+			ReadWindowIdentity(hwnd,
+				wndClass, _countof(wndClass),
+				processPath, _countof(processPath),
+				windowTitle, _countof(windowTitle),
+				NULL);
+			SavedWindowData* pData = InstanceData::g_Instance.FindWindowSlot(hwnd, wndClass, processPath, windowTitle);
 			if (pData->SetData(hwnd, configHash))
 			{
 				int* pCount = reinterpret_cast<int*>(lParam);
@@ -580,7 +697,7 @@ void VerifyRestoredWindows()
 			dw > PLACEMENT_TOLERANCE || dh > PLACEMENT_TOLERANCE) {
 			TCHAR identity[512];
 			TCHAR sz[1024];
-			FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
+			FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, wd.m_processPath, wd.m_windowTitle, identity, _countof(identity));
 			StringCchPrintf(sz, _countof(sz),
 				_T("%s: expected (%d,%d %dx%d) got (%d,%d %dx%d)"),
 				identity,

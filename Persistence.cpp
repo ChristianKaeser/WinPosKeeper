@@ -13,6 +13,7 @@
 #define LEGACY_APPDATA_DIR_NAME _T("MonitorKeeper")
 #define PERSIST_MAGIC_V2 0x4D4B5032
 #define PERSIST_MAGIC_V3 0x4D4B5033
+#define PERSIST_MAGIC_V4 0x4D4B5034
 
 static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
 {
@@ -144,7 +145,7 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 	}
 
 	DWORD written;
-	DWORD magic = PERSIST_MAGIC_V3;
+	DWORD magic = PERSIST_MAGIC_V4;
 	WriteFile(hFile, &magic, sizeof(magic), &written, NULL);
 
 	DWORD snapshotCount = (DWORD)_ConfigSnapshots.size();
@@ -171,6 +172,8 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 		if (wd.m_wndClass[0] == '\0' || wd.m_placements.empty())
 			continue;
 		WriteFile(hFile, wd.m_wndClass, sizeof(wd.m_wndClass), &written, NULL);
+		WriteFile(hFile, wd.m_processPath, sizeof(wd.m_processPath), &written, NULL);
+		WriteFile(hFile, wd.m_windowTitle, sizeof(wd.m_windowTitle), &written, NULL);
 		DWORD placementCount = (DWORD)wd.m_placements.size();
 		WriteFile(hFile, &placementCount, sizeof(placementCount), &written, NULL);
 		for (const auto& pair : wd.m_placements) {
@@ -220,9 +223,9 @@ void InstanceData::LoadFromDisk()
 		CloseHandle(hFile);
 		return;
 	}
-	if (magic != PERSIST_MAGIC_V2 && magic != PERSIST_MAGIC_V3) {
+	if (magic != PERSIST_MAGIC_V2 && magic != PERSIST_MAGIC_V3 && magic != PERSIST_MAGIC_V4) {
 		LOG_EVENTF(_T("ERROR"), _T("Unsupported persisted data format on disk (magic=0x%08X, expected 0x%08X)"),
-			magic, PERSIST_MAGIC_V3);
+			magic, PERSIST_MAGIC_V4);
 		CloseHandle(hFile);
 		return;
 	}
@@ -280,9 +283,19 @@ void InstanceData::LoadFromDisk()
 
 	for (DWORD e = 0; e < entryCount; e++) {
 		TCHAR wndClass[40];
+		TCHAR processPath[MAX_PATH] = _T("");
+		TCHAR windowTitle[256] = _T("");
 		if (!ReadFile(hFile, wndClass, sizeof(wndClass), &bytesRead, NULL) || bytesRead != sizeof(wndClass))
 			break;
 		wndClass[39] = '\0';
+		if (magic == PERSIST_MAGIC_V4) {
+			if (!ReadFile(hFile, processPath, sizeof(processPath), &bytesRead, NULL) || bytesRead != sizeof(processPath))
+				break;
+			processPath[_countof(processPath) - 1] = '\0';
+			if (!ReadFile(hFile, windowTitle, sizeof(windowTitle), &bytesRead, NULL) || bytesRead != sizeof(windowTitle))
+				break;
+			windowTitle[_countof(windowTitle) - 1] = '\0';
+		}
 
 		DWORD placementCount = 0;
 		if (!ReadFile(hFile, &placementCount, sizeof(placementCount), &bytesRead, NULL))
@@ -291,17 +304,9 @@ void InstanceData::LoadFromDisk()
 
 		SavedWindowData* pData = nullptr;
 		for (auto& wd : _WindowData) {
-			if (lstrcmp(wd.m_wndClass, wndClass) == 0) {
+			if (wd.m_hwnd == NULL && wd.m_wndClass[0] == '\0' && wd.m_placements.empty()) {
 				pData = &wd;
 				break;
-			}
-		}
-		if (!pData) {
-			for (auto& wd : _WindowData) {
-				if (wd.m_hwnd == NULL && wd.m_wndClass[0] == '\0') {
-					pData = &wd;
-					break;
-				}
 			}
 		}
 		if (!pData) {
@@ -311,6 +316,8 @@ void InstanceData::LoadFromDisk()
 		}
 
 		lstrcpyn(pData->m_wndClass, wndClass, 40);
+		lstrcpyn(pData->m_processPath, processPath, _countof(pData->m_processPath));
+		lstrcpyn(pData->m_windowTitle, windowTitle, _countof(pData->m_windowTitle));
 
 		for (DWORD p = 0; p < placementCount; p++) {
 			UINT64 configHash;

@@ -41,9 +41,12 @@ public:
 	std::map<UINT64, WINDOWPLACEMENT> m_placements;
 	HWND m_hwnd;
 	TCHAR m_wndClass[40];
+	TCHAR m_processPath[MAX_PATH];
+	TCHAR m_windowTitle[256];
 
 	BOOL SetData(HWND hwnd, UINT64 configHash);
 	BOOL HasPlacement(UINT64 configHash) const;
+	int MatchIdentityScore(LPCTSTR wndClass, LPCTSTR processPath, LPCTSTR windowTitle) const;
 	BOOL RestoreWindow(UINT64 configHash);
 };
 
@@ -61,7 +64,7 @@ public:
 	int GetOrCreateConfigId(UINT64 configHash);
 	BOOL TryGetSnapshotInfo(UINT64 configHash, ConfigSnapshotInfo& info) const;
 	int RestoreWindowPositions(UINT64 configHash);
-	SavedWindowData* FindWindowSlot(HWND hwnd);
+	SavedWindowData* FindWindowSlot(HWND hwnd, LPCTSTR wndClass, LPCTSTR processPath, LPCTSTR windowTitle);
 
 	static BOOL GetPersistPath(TCHAR* path, DWORD cch);
 	BOOL SaveToDisk(LPCTSTR reason);
