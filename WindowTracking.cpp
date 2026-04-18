@@ -123,6 +123,15 @@ ConfigSnapshotInfo::ConfigSnapshotInfo()
 	windowCount = 0;
 }
 
+static void UpdateSnapshotForCurrentConfig(UINT64 configHash, DWORD windowCount)
+{
+	auto& inst = InstanceData::g_Instance;
+	ConfigSnapshotInfo& snapshot = inst._ConfigSnapshots[configHash];
+	snapshot.lastSavedUtc = inst._LastCaptureUtc;
+	snapshot.windowCount = windowCount;
+	GetCurrentMonitorLayout(snapshot.monitorLayout);
+}
+
 InstanceData::InstanceData()
 {
 	_Hook = NULL;
@@ -476,9 +485,7 @@ void ProcessDesktopWindows()
 	int savedCount = 0;
 	EnumDesktopWindows(NULL, SaveWindowsCallback, (LPARAM)&savedCount);
 	GetSystemTimeAsFileTime(&InstanceData::g_Instance._LastCaptureUtc);
-	ConfigSnapshotInfo& snapshot = InstanceData::g_Instance._ConfigSnapshots[currentHash];
-	snapshot.lastSavedUtc = InstanceData::g_Instance._LastCaptureUtc;
-	snapshot.windowCount = (DWORD)savedCount;
+	UpdateSnapshotForCurrentConfig(currentHash, (DWORD)savedCount);
 	UpdateStatusPanel();
 }
 
@@ -597,6 +604,11 @@ void VerifyRestoredWindows()
 		else {
 			LOG_EVENT(_T("VERIFY"), _T("All windows at expected positions"));
 		}
+		inst._RestoreRetryCount = 0;
+		inst._AwaitingRestoreRetry = FALSE;
+		inst.InChangingState = false;
+		ProcessDesktopWindows();
+		return;
 	}
 	else if (inst._RestoreRetryCount < RESTORE_RETRY_LIMIT) {
 		inst._RestoreRetryCount++;

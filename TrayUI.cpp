@@ -328,9 +328,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		InstanceData::g_Instance.LoggingEnabled);
 	InstanceData::g_Instance.LoadFromDisk();
 
-	ProcessDesktopWindows();
 	InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
 	InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();
+	ProcessDesktopWindows();
 	InstanceData::g_Instance._Hook = HookDisplayChange();
 	WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 

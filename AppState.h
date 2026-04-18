@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MonitorKeeper.h"
+#include "MonitorConfig.h"
 
 #define MAX_LOADSTRING 100
 #define MAX_CONFIGSLOTS 16
@@ -25,6 +26,7 @@ extern UINT WM_TASKBARCREATED;
 struct ConfigSnapshotInfo {
 	FILETIME lastSavedUtc;
 	DWORD windowCount;
+	std::vector<MonitorInfo> monitorLayout;
 
 	ConfigSnapshotInfo();
 };

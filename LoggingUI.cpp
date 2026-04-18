@@ -335,9 +335,12 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 	if (selectedHash == inst._ConfigHash) {
 		GetCurrentMonitorSummary(monitorSummary, _countof(monitorSummary));
 	}
+	else if (hasSnapshot && !snapshotInfo.monitorLayout.empty()) {
+		FormatMonitorSummary(snapshotInfo.monitorLayout, monitorSummary, _countof(monitorSummary));
+	}
 	else {
 		StringCchCopy(monitorSummary, _countof(monitorSummary),
-			_T("Unavailable for historical configs (only the current live monitor layout is tracked in detail)."));
+			_T("Not recorded for this historical layout yet. It will appear after that layout becomes active again."));
 	}
 
 	TCHAR summary[1400];

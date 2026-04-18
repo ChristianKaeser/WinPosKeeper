@@ -173,11 +173,12 @@ void ProcessMonitors()
 
 	if (didRestore) {
 		SetTimer(InstanceData::g_Instance._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+		UpdateStatusPanel();
 	}
 	else {
 		InstanceData::g_Instance.InChangingState = false;
+		ProcessDesktopWindows();
 	}
-	UpdateStatusPanel();
 }
 
 VOID CALLBACK TimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)

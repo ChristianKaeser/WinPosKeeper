@@ -12,6 +12,7 @@
 #define APPDATA_DIR_NAME _T("MonWinPosKeeper")
 #define LEGACY_APPDATA_DIR_NAME _T("MonitorKeeper")
 #define PERSIST_MAGIC_V2 0x4D4B5032
+#define PERSIST_MAGIC_V3 0x4D4B5033
 
 static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
 {
@@ -143,7 +144,7 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 	}
 
 	DWORD written;
-	DWORD magic = PERSIST_MAGIC_V2;
+	DWORD magic = PERSIST_MAGIC_V3;
 	WriteFile(hFile, &magic, sizeof(magic), &written, NULL);
 
 	DWORD snapshotCount = (DWORD)_ConfigSnapshots.size();
@@ -152,6 +153,11 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 		WriteFile(hFile, &snapshot.first, sizeof(snapshot.first), &written, NULL);
 		WriteFile(hFile, &snapshot.second.lastSavedUtc, sizeof(snapshot.second.lastSavedUtc), &written, NULL);
 		WriteFile(hFile, &snapshot.second.windowCount, sizeof(snapshot.second.windowCount), &written, NULL);
+		DWORD monitorCount = (DWORD)snapshot.second.monitorLayout.size();
+		WriteFile(hFile, &monitorCount, sizeof(monitorCount), &written, NULL);
+		for (const auto& monitor : snapshot.second.monitorLayout) {
+			WriteFile(hFile, &monitor, sizeof(monitor), &written, NULL);
+		}
 	}
 
 	DWORD entryCount = 0;
@@ -214,9 +220,9 @@ void InstanceData::LoadFromDisk()
 		CloseHandle(hFile);
 		return;
 	}
-	if (magic != PERSIST_MAGIC_V2) {
+	if (magic != PERSIST_MAGIC_V2 && magic != PERSIST_MAGIC_V3) {
 		LOG_EVENTF(_T("ERROR"), _T("Unsupported persisted data format on disk (magic=0x%08X, expected 0x%08X)"),
-			magic, PERSIST_MAGIC_V2);
+			magic, PERSIST_MAGIC_V3);
 		CloseHandle(hFile);
 		return;
 	}
@@ -241,6 +247,24 @@ void InstanceData::LoadFromDisk()
 			break;
 		if (!ReadFile(hFile, &info.windowCount, sizeof(info.windowCount), &bytesRead, NULL) || bytesRead != sizeof(info.windowCount))
 			break;
+		if (magic == PERSIST_MAGIC_V3) {
+			DWORD monitorCount = 0;
+			if (!ReadFile(hFile, &monitorCount, sizeof(monitorCount), &bytesRead, NULL) || bytesRead != sizeof(monitorCount))
+				break;
+			if (monitorCount > 64) {
+				LOG_EVENTF(_T("ERROR"), _T("Persisted monitor count is unreasonable: %lu"), monitorCount);
+				CloseHandle(hFile);
+				return;
+			}
+			info.monitorLayout.resize((size_t)monitorCount);
+			for (DWORD monitorIndex = 0; monitorIndex < monitorCount; ++monitorIndex) {
+				if (!ReadFile(hFile, &info.monitorLayout[(size_t)monitorIndex], sizeof(MonitorInfo), &bytesRead, NULL) ||
+					bytesRead != sizeof(MonitorInfo)) {
+					info.monitorLayout.resize((size_t)monitorIndex);
+					break;
+				}
+			}
+		}
 		_ConfigSnapshots[configHash] = info;
 		GetOrCreateConfigId(configHash);
 	}
