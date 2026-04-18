@@ -304,6 +304,27 @@ static BOOL IsLayoutsViewVisible()
 		IsWindowVisible(inst._hPlacementList);
 }
 
+static LPCTSTR DescribePlacementRecordState(const SavedWindowData& wd)
+{
+	return (wd.m_hwnd != NULL && IsWindow(wd.m_hwnd) && wd.m_nUnusedCount <= 2) ? _T("open") : _T("saved");
+}
+
+static void GetSnapshotMonitorSummary(UINT64 configHash, const ConfigSnapshotInfo& snapshotInfo, BOOL hasSnapshot,
+	TCHAR* buffer, size_t cchBuffer)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (configHash == inst._ConfigHash) {
+		GetCurrentMonitorSummary(buffer, cchBuffer);
+	}
+	else if (hasSnapshot && !snapshotInfo.monitorLayout.empty()) {
+		FormatMonitorSummary(snapshotInfo.monitorLayout, buffer, cchBuffer);
+	}
+	else {
+		StringCchCopy(buffer, cchBuffer,
+			_T("Not recorded for this historical layout yet. It will appear after that layout becomes active again."));
+	}
+}
+
 static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 {
 	auto& inst = InstanceData::g_Instance;
@@ -332,26 +353,19 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 	}
 
 	TCHAR monitorSummary[1024];
-	if (selectedHash == inst._ConfigHash) {
-		GetCurrentMonitorSummary(monitorSummary, _countof(monitorSummary));
-	}
-	else if (hasSnapshot && !snapshotInfo.monitorLayout.empty()) {
-		FormatMonitorSummary(snapshotInfo.monitorLayout, monitorSummary, _countof(monitorSummary));
-	}
-	else {
-		StringCchCopy(monitorSummary, _countof(monitorSummary),
-			_T("Not recorded for this historical layout yet. It will appear after that layout becomes active again."));
-	}
+	GetSnapshotMonitorSummary(selectedHash, snapshotInfo, hasSnapshot, monitorSummary, _countof(monitorSummary));
 
-	TCHAR summary[1400];
+	TCHAR summary[2048];
 	StringCchPrintf(summary, _countof(summary),
-		_T("Config ID/Hash:          #%-3d   0x%016I64X   %s\r\n")
-		_T("Stored/Snapshot Windows: %d / %lu\r\n")
-		_T("Last Saved:              %s\r\n")
-		_T("Desktop Layout:          %s"),
+		_T("Saved layout:        #%-3d   %s\r\n")
+		_T("Config hash:         0x%016I64X\r\n")
+		_T("Saved placements:    %d window record(s)\r\n")
+		_T("Last full snapshot:  %lu visible top-level window(s)\r\n")
+		_T("Snapshot time:       %s\r\n")
+		_T("Monitor layout:      %s"),
 		inst.GetOrCreateConfigId(selectedHash),
+		selectedHash == inst._ConfigHash ? _T("current layout") : _T("historical layout"),
 		selectedHash,
-		selectedHash == inst._ConfigHash ? _T("<current layout>") : _T("<not current layout>"),
 		inst.CountPlacementsForConfig(selectedHash),
 		hasSnapshot ? snapshotInfo.windowCount : 0,
 		lastSaved,
@@ -359,9 +373,9 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 	SetWindowText(inst._hConfigSummary, summary);
 	
 	SendMessage(inst._hPlacementList, LB_ADDSTRING, 0,
-		(LPARAM)_T("Status     X   Y     Width Height State          Process / Window Title"));
+		(LPARAM)_T("Window   Left    Top  Width Height Show State     Process / Window Title"));
 	SendMessage(inst._hPlacementList, LB_ADDSTRING, 0,
-		(LPARAM)_T("------  ----- -----  ----- -----  -------------  --------------------------------"));
+		(LPARAM)_T("------ ------ ------ ------ ------ -------------  --------------------------------"));
 
 	for (const auto& wd : inst._WindowData) {
 		auto it = wd.m_placements.find(selectedHash);
@@ -374,8 +388,8 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 		TCHAR line[1400];
 		FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, identity, _countof(identity));
 		StringCchPrintf(line, _countof(line),
-			_T("%-6s %5d |%5d %5d x%5d  %-13s  %s"),
-			(wd.m_hwnd != NULL && IsWindow(wd.m_hwnd) && wd.m_nUnusedCount <= 2) ? _T("live") : _T("stale"),
+			_T("%-6s %6d %6d %6d %6d %-13s  %s"),
+			DescribePlacementRecordState(wd),
 			place.rcNormalPosition.left,
 			place.rcNormalPosition.top,
 			place.rcNormalPosition.right - place.rcNormalPosition.left,
@@ -518,26 +532,29 @@ void RefreshPlacementInspector()
 	SendMessage(inst._hConfigList, LB_RESETCONTENT, 0, 0);
 
 	for (UINT64 configHash : configHashes) {
-		TCHAR line[256];
+		TCHAR line[1400];
 		TCHAR configId[16];
 		ConfigSnapshotInfo snapshotInfo;
 		BOOL hasSnapshot = inst.TryGetSnapshotInfo(configHash, snapshotInfo);
 		TCHAR lastSaved[32];
+		TCHAR monitorSummary[768];
 		if (hasSnapshot) {
 			FormatFileTimeLocal(&snapshotInfo.lastSavedUtc, lastSaved, _countof(lastSaved));
 		}
 		else {
 			StringCchCopy(lastSaved, _countof(lastSaved), _T("unknown"));
 		}
+		GetSnapshotMonitorSummary(configHash, snapshotInfo, hasSnapshot, monitorSummary, _countof(monitorSummary));
 		StringCchPrintf(configId, _countof(configId), _T("#%d"), inst.GetOrCreateConfigId(configHash));
 
 		StringCchPrintf(line, _countof(line),
-			_T("%-3s  %016I64X %4d  %-8s  %s"),
+			_T("%-6s %-10s placements=%-4d snapshot=%-4lu last=%-19s %s"),
 			configId,
-			configHash,
+			configHash == inst._ConfigHash ? _T("current") : _T("saved"),
 			inst.CountPlacementsForConfig(configHash),
+			hasSnapshot ? snapshotInfo.windowCount : 0,
 			lastSaved,
-			configHash == inst._ConfigHash ? _T("current") : _T(""));
+			monitorSummary);
 		SendMessage(inst._hConfigList, LB_ADDSTRING, 0, (LPARAM)line);
 	}
 
@@ -607,8 +624,8 @@ void UpdateStatusPanel()
 	TCHAR text[1024];
 	StringCchPrintf(text, _countof(text),
 		_T("Config #%d: 0x%016I64X  |  Monitors: %s\r\n")
-		_T("Stored configs: %d  |  Window records: %d  |  Current cfg positions: %d  |  Total placements: %d  |  Recent HWNDs: %d\r\n")
-		_T("Last capture: %s  |  Last disk: %s  |  Disk: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Autostart: %s  |  Logging: %s"),
+		_T("Saved layouts: %d  |  Window records: %d  |  Placements for current layout: %d  |  Placements total: %d  |  Open tracked windows: %d\r\n")
+		_T("Last full snapshot: %s  |  Last disk sync: %s  |  Data file: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Autostart: %s  |  Logging: %s"),
 		configId, inst._ConfigHash,
 		monitorSummary,
 		(int)configs.size(), windowRecords, currentConfigPlacements, totalPlacements, trackedWindows,

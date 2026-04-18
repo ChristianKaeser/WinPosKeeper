@@ -118,24 +118,31 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 			contentRect.left, contentRect.top, contentWidth, contentHeight, TRUE);
 	}
 
-	int leftWidth = min(260, max(180, contentWidth / 3));
-	int rightWidth = contentWidth - leftWidth - 8;
-	if (rightWidth < 120) {
-		rightWidth = 120;
+	int selectorHeight = min(88, max(56, contentHeight / 6));
+	int summaryHeight = min(110, max(78, contentHeight / 4));
+	int detailsTop = contentRect.top + selectorHeight + 8;
+	int detailsHeight = contentHeight - selectorHeight - 8;
+	if (detailsHeight < 80) {
+		detailsHeight = 80;
 	}
-	int summaryHeight = min(96, max(72, contentHeight / 4));
+	int placementsTop = detailsTop + summaryHeight + 8;
+	int placementsHeight = detailsHeight - summaryHeight - 8;
+	if (placementsHeight < 80) {
+		placementsHeight = 80;
+		summaryHeight = max(60, detailsHeight - placementsHeight - 8);
+		placementsTop = detailsTop + summaryHeight + 8;
+	}
 	if (InstanceData::g_Instance._hConfigList) {
 		MoveWindow(InstanceData::g_Instance._hConfigList,
-			contentRect.left, contentRect.top, leftWidth, contentHeight, TRUE);
+			contentRect.left, contentRect.top, contentWidth, selectorHeight, TRUE);
 	}
 	if (InstanceData::g_Instance._hConfigSummary) {
 		MoveWindow(InstanceData::g_Instance._hConfigSummary,
-			contentRect.left + leftWidth + 8, contentRect.top, rightWidth, summaryHeight, TRUE);
+			contentRect.left, detailsTop, contentWidth, summaryHeight, TRUE);
 	}
 	if (InstanceData::g_Instance._hPlacementList) {
 		MoveWindow(InstanceData::g_Instance._hPlacementList,
-			contentRect.left + leftWidth + 8, contentRect.top + summaryHeight + 8,
-			rightWidth, contentHeight - summaryHeight - 8, TRUE);
+			contentRect.left, placementsTop, contentWidth, placementsHeight, TRUE);
 	}
 }
 
@@ -320,7 +327,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	SendMessage(InstanceData::g_Instance._hReadmeView, WM_SETFONT,
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
-	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 4096, 0);
+	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 12288, 0);
 	SendMessage(InstanceData::g_Instance._hPlacementList, LB_SETHORIZONTALEXTENT, 8192, 0);
 
 	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
