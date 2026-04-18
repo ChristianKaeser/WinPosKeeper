@@ -1,8 +1,8 @@
-# MonWinPosKeeper
+# WinPosKeeper
 
 Automatically restores window positions when your monitor or desktop configuration changes.
 
-MonWinPosKeeper is a continuation of the original MonitorKeeper project by Garr Godfrey.
+WinPosKeeper is a continuation of the original MonitorKeeper project by Garr Godfrey.
 
 Original Author: Garr Godfrey
 
@@ -12,7 +12,7 @@ License: MIT
 
 ## What it does
 
-When a monitor is disconnected, powered off, or switched away, Windows usually repacks top-level windows onto the remaining desktop area. When that layout later comes back, MonWinPosKeeper re-applies the saved positions for that specific monitor arrangement.
+When a monitor is disconnected, powered off, or switched away, Windows usually repacks top-level windows onto the remaining desktop area. When that layout later comes back, WinPosKeeper re-applies the saved positions for that specific monitor arrangement.
 
 The app does not only look at the monitor count. It hashes the current monitor layout from the device names and monitor rectangles, so different two-monitor arrangements are treated as different saved layouts.
 
@@ -33,7 +33,7 @@ Open tracked window: a window record that is currently matched to a live top-lev
 ## Features
 
 - Automatic save and restore of window positions per saved layout
-- Optional persistence to `%APPDATA%\MonWinPosKeeper\positions.dat`
+- Optional persistence to `%APPDATA%\WinPosKeeper\positions.dat`
 - Optional autostart via the tray menu
 - Optional restore when monitors disconnect
 - Built-in diagnostics through the Log, Layouts, and README tabs
@@ -42,7 +42,7 @@ Open tracked window: a window record that is currently matched to a live top-lev
 
 ## Using the app
 
-MonWinPosKeeper runs in the system tray. Right-click the tray icon for options:
+WinPosKeeper runs in the system tray. Right-click the tray icon for options:
 
 | Menu item | Description |
 |-----------|-------------|
@@ -81,7 +81,7 @@ The README tab shows this file from an embedded resource so deployment stays a s
 
 ## Persistence format
 
-When disk persistence is enabled, the app writes `%APPDATA%\MonWinPosKeeper\positions.dat`.
+When disk persistence is enabled, the app writes `%APPDATA%\WinPosKeeper\positions.dat`.
 
 The current file format is a simple binary format with a version magic followed by two tables:
 
@@ -127,12 +127,12 @@ Run `build.bat` from a command prompt. It uses `vswhere` to find Visual Studio, 
 
 Requirements: Visual Studio 2022 with the Desktop development with C++ workload.
 
-Output: `Release\Win32\MonWinPosKeeper.exe`
+Output: `Release\Win32\WinPosKeeper.exe`
 
 ## Quick test
 
 1. Connect two monitors and place some windows across both.
-2. Start MonWinPosKeeper.
+2. Start WinPosKeeper.
 3. Change the layout so Windows moves everything onto one display.
 4. Restore the original monitor layout.
 5. Confirm the windows return to their saved positions.

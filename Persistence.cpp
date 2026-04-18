@@ -5,12 +5,15 @@
 #include "LoggingUI.h"
 
 #define AUTOSTART_REG_KEY _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-#define AUTOSTART_VALUE _T("MonWinPosKeeper")
-#define LEGACY_AUTOSTART_VALUE _T("MonitorKeeper")
-#define SETTINGS_REG_KEY _T("Software\\MonWinPosKeeper")
-#define LEGACY_SETTINGS_REG_KEY _T("Software\\MonitorKeeper")
-#define APPDATA_DIR_NAME _T("MonWinPosKeeper")
-#define LEGACY_APPDATA_DIR_NAME _T("MonitorKeeper")
+#define AUTOSTART_VALUE _T("WinPosKeeper")
+#define LEGACY_AUTOSTART_VALUE _T("MonWinPosKeeper")
+#define LEGACY_AUTOSTART_VALUE_V1 _T("MonitorKeeper")
+#define SETTINGS_REG_KEY _T("Software\\WinPosKeeper")
+#define LEGACY_SETTINGS_REG_KEY _T("Software\\MonWinPosKeeper")
+#define LEGACY_SETTINGS_REG_KEY_V1 _T("Software\\MonitorKeeper")
+#define APPDATA_DIR_NAME _T("WinPosKeeper")
+#define LEGACY_APPDATA_DIR_NAME _T("MonWinPosKeeper")
+#define LEGACY_APPDATA_DIR_NAME_V1 _T("MonitorKeeper")
 #define PERSIST_MAGIC_V2 0x4D4B5032
 #define PERSIST_MAGIC_V3 0x4D4B5033
 #define PERSIST_MAGIC_V4 0x4D4B5034
@@ -32,7 +35,8 @@ BOOL IsAutostartEnabled()
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
 		return FALSE;
 	BOOL exists = (RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) ||
-		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
+		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) ||
+		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE_V1, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
 	RegCloseKey(hKey);
 	return exists;
 }
@@ -55,6 +59,7 @@ void SetAutostart(BOOL enable)
 			LogWin32Error(_T("WARNING"), _T("RegSetValueEx for autostart"), status);
 		}
 		RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
+		RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE_V1);
 	}
 	else {
 		status = RegDeleteValue(hKey, AUTOSTART_VALUE);
@@ -64,6 +69,10 @@ void SetAutostart(BOOL enable)
 		status = RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
 		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
 			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for legacy autostart"), status);
+		}
+		status = RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE_V1);
+		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
+			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for legacy v1 autostart"), status);
 		}
 	}
 	RegCloseKey(hKey);
@@ -97,8 +106,10 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-		if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
-			return;
+		if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+			if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY_V1, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+				return;
+		}
 	}
 	DWORD val;
 	DWORD size = sizeof(val);
@@ -205,11 +216,19 @@ void InstanceData::LoadFromDisk()
 	HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME, path, MAX_PATH)) {
-			return;
+			if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME_V1, path, MAX_PATH)) {
+				return;
+			}
 		}
 		hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (hFile == INVALID_HANDLE_VALUE) {
-			return;
+			if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME_V1, path, MAX_PATH)) {
+				return;
+			}
+			hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (hFile == INVALID_HANDLE_VALUE) {
+				return;
+			}
 		}
 	}
 

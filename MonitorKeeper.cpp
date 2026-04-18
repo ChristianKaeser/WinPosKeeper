@@ -3,7 +3,7 @@
 // Original author: Garr Godfrey
 // License: MIT License
 //
-// Entry point and shared globals for the MonWinPosKeeper application.
+// Entry point and shared globals for the WinPosKeeper application.
 
 #include "AppState.h"
 
