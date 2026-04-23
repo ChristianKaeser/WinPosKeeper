@@ -22,7 +22,7 @@ The app uses a few terms repeatedly in the UI and log.
 
 Saved layout: a monitor configuration identified by a 64-bit hash. Each saved layout can have its own saved window placements.
 
-Window record: one tracked window identity in memory or on disk. A window record stores the window class, last known process path, last known title, and up to `MAX_CONFIGSLOTS` saved placements across different layouts.
+Window record: one tracked window identity in memory. While the app is running, the strong key is the live `HWND` plus the owning process ID and window class. The stored process path and title are kept for diagnostics only. Each window record can carry up to `MAX_CONFIGSLOTS` saved placements across different layouts.
 
 Saved placement: one `WINDOWPLACEMENT` value for one window record under one saved layout. This is the actual rectangle and show-state that can be restored later.
 
@@ -33,7 +33,7 @@ Open tracked window: a window record that is currently matched to a live top-lev
 ## Features
 
 - Automatic save and restore of window positions per saved layout
-- Optional persistence to `%APPDATA%\WinPosKeeper\positions.dat`
+- Optional same-session restart recovery in `%APPDATA%\WinPosKeeper\positions.dat`
 - Optional autostart via the tray menu
 - Optional restore when monitors disconnect
 - Built-in diagnostics through the Log, Layouts, and README tabs
@@ -50,7 +50,7 @@ WinPosKeeper runs in the system tray. Right-click the tray icon for options:
 | Show Window | Open the main status window |
 | Also restore positions when monitors disconnect | Re-apply saved placements when a monitor disappears |
 | Start with Windows | Toggle autostart at logon |
-| Persist Positions to Disk | Save and reload placements across app restarts |
+| Persist Positions to Disk | Save and reload placements if WinPosKeeper itself restarts during the same Windows session |
 | Enable Event Logging | Toggle the on-screen log |
 | Exit | Quit the app |
 
@@ -95,23 +95,30 @@ Each saved layout snapshot stores:
 - Last full-snapshot window count
 - Saved monitor layout list, including monitor rectangles, device names, and friendly names
 
-Each window record stores:
+Each persisted window record stores:
 
-- Window class
-- Last known process image path
-- Last known window title
+- A boot/session marker in the file header to prove the file belongs to the current Windows session
+- The live `HWND` value
+- The owning process ID
+- The window class
 - A list of saved placements keyed by layout hash
 
 Each saved placement stores the raw Win32 `WINDOWPLACEMENT` structure for one window record under one saved layout.
 
-The file does not store HWND values because they are process-lifetime handles and are not stable across restarts.
+Persisted records are only accepted if all of these still match when the app starts again:
 
-The file also does not store application-specific document IDs, browser tab IDs, or any deeper semantic identity beyond class, process path, and last title.
+- The file was written during the current Windows boot and logon session.
+- The saved `HWND` still exists.
+- The saved process ID still owns that `HWND`.
+- The saved window class still matches.
+
+If any of those checks fail, the persisted record is ignored rather than guessed back onto a different window.
 
 ## Persistence limitations
 
-- Matching saved records back to live windows after a restart is heuristic. The app uses class, process path, and title, which is much better than class-only matching but still cannot perfectly distinguish multiple truly identical windows from the same app.
-- Older persisted files from earlier format versions may not contain saved monitor layouts or saved window identity fields. Those details are filled in once the app sees those layouts and windows again.
+- Disk persistence is intentionally conservative. It is meant to recover from WinPosKeeper itself restarting during the same Windows session, not to carry exact window identity safely across a reboot or after target applications have been closed and restarted.
+- `HWND` values are only stable while the target window continues to exist. If a target application recreates its window or restarts, the persisted record will be discarded.
+- Older persisted files from earlier heuristic formats are intentionally ignored because they cannot be matched back strongly enough.
 - Only the newest `MAX_CONFIGSLOTS` layouts are kept per window record. Very old layouts are pruned per window record, not globally.
 
 ## Runtime limitations

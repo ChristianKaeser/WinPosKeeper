@@ -386,7 +386,7 @@ static void UpdatePlacementInspectorDetails(UINT64 selectedHash)
 		const WINDOWPLACEMENT& place = it->second;
 		TCHAR identity[512];
 		TCHAR line[1400];
-		FormatWindowIdentity(wd.m_hwnd, wd.m_wndClass, wd.m_processPath, wd.m_windowTitle, identity, _countof(identity));
+		FormatWindowIdentity(wd.m_hwnd, wd.m_processId, wd.m_wndClass, wd.m_processPath, wd.m_windowTitle, identity, _countof(identity));
 		StringCchPrintf(line, _countof(line),
 			_T("%-6s %6d %6d %6d %6d %-13s  %s"),
 			DescribePlacementRecordState(wd),

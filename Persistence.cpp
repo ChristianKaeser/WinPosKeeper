@@ -14,9 +14,8 @@
 #define APPDATA_DIR_NAME _T("WinPosKeeper")
 #define LEGACY_APPDATA_DIR_NAME _T("MonWinPosKeeper")
 #define LEGACY_APPDATA_DIR_NAME_V1 _T("MonitorKeeper")
-#define PERSIST_MAGIC_V2 0x4D4B5032
-#define PERSIST_MAGIC_V3 0x4D4B5033
-#define PERSIST_MAGIC_V4 0x4D4B5034
+#define PERSIST_MAGIC_V5 0x4D4B5035
+#define PERSIST_BOOT_MARKER_TOLERANCE_100NS (30ULL * 1000ULL * 1000ULL * 10ULL)
 
 static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
 {
@@ -27,6 +26,79 @@ static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
 	CreateDirectory(path, NULL);
 	StringCchCat(path, cch, _T("\\positions.dat"));
 	return TRUE;
+}
+
+static ULONGLONG FileTimeToUInt64(const FILETIME& value)
+{
+	ULARGE_INTEGER result = {};
+	result.LowPart = value.dwLowDateTime;
+	result.HighPart = value.dwHighDateTime;
+	return result.QuadPart;
+}
+
+static FILETIME UInt64ToFileTime(ULONGLONG value)
+{
+	ULARGE_INTEGER result = {};
+	FILETIME fileTime = {};
+	result.QuadPart = value;
+	fileTime.dwLowDateTime = result.LowPart;
+	fileTime.dwHighDateTime = result.HighPart;
+	return fileTime;
+}
+
+static FILETIME GetCurrentBootMarkerUtc()
+{
+	FILETIME nowUtc = {};
+	GetSystemTimeAsFileTime(&nowUtc);
+	ULONGLONG nowValue = FileTimeToUInt64(nowUtc);
+	ULONGLONG uptimeValue = GetTickCount64() * 10000ULL;
+	return UInt64ToFileTime(nowValue > uptimeValue ? nowValue - uptimeValue : 0);
+}
+
+static DWORD GetCurrentSessionIdValue()
+{
+	DWORD sessionId = 0;
+	if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) {
+		return 0xFFFFFFFFu;
+	}
+	return sessionId;
+}
+
+static BOOL IsCompatiblePersistSession(const FILETIME& bootMarkerUtc, DWORD sessionId)
+{
+	if (sessionId != GetCurrentSessionIdValue()) {
+		return FALSE;
+	}
+
+	ULONGLONG expected = FileTimeToUInt64(bootMarkerUtc);
+	ULONGLONG current = FileTimeToUInt64(GetCurrentBootMarkerUtc());
+	ULONGLONG delta = expected > current ? expected - current : current - expected;
+	return delta <= PERSIST_BOOT_MARKER_TOLERANCE_100NS;
+}
+
+static void PopulateSavedWindowIdentity(SavedWindowData& data, HWND hwnd, DWORD processId)
+{
+	data.m_hwnd = hwnd;
+	data.m_processId = processId;
+	data.m_nUnusedCount = 0;
+	data.m_lastRestoreError = ERROR_SUCCESS;
+	data.m_retryPending = FALSE;
+
+	RealGetWindowClass(hwnd, data.m_wndClass, _countof(data.m_wndClass));
+	GetWindowText(hwnd, data.m_windowTitle, _countof(data.m_windowTitle));
+	data.m_processPath[0] = '\0';
+
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+	if (hProcess == NULL) {
+		StringCchCopy(data.m_processPath, _countof(data.m_processPath), _T("<access denied>"));
+		return;
+	}
+
+	DWORD cch = _countof(data.m_processPath);
+	if (!QueryFullProcessImageName(hProcess, 0, data.m_processPath, &cch)) {
+		StringCchCopy(data.m_processPath, _countof(data.m_processPath), _T("<access denied>"));
+	}
+	CloseHandle(hProcess);
 }
 
 BOOL IsAutostartEnabled()
@@ -156,10 +228,15 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 	}
 
 	DWORD written;
-	DWORD magic = PERSIST_MAGIC_V4;
+	FILETIME bootMarkerUtc = GetCurrentBootMarkerUtc();
+	DWORD sessionId = GetCurrentSessionIdValue();
+	DWORD magic = PERSIST_MAGIC_V5;
 	WriteFile(hFile, &magic, sizeof(magic), &written, NULL);
+	WriteFile(hFile, &bootMarkerUtc, sizeof(bootMarkerUtc), &written, NULL);
+	WriteFile(hFile, &sessionId, sizeof(sessionId), &written, NULL);
 
 	DWORD snapshotCount = (DWORD)_ConfigSnapshots.size();
+	int persistedPlacementCount = 0;
 	WriteFile(hFile, &snapshotCount, sizeof(snapshotCount), &written, NULL);
 	for (const auto& snapshot : _ConfigSnapshots) {
 		WriteFile(hFile, &snapshot.first, sizeof(snapshot.first), &written, NULL);
@@ -174,18 +251,21 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 
 	DWORD entryCount = 0;
 	for (const auto& wd : _WindowData) {
-		if (wd.m_wndClass[0] != '\0' && !wd.m_placements.empty())
+		if (wd.m_hwnd != NULL && wd.m_processId != 0 && IsWindow(wd.m_hwnd) && wd.m_wndClass[0] != '\0' && !wd.m_placements.empty())
 			entryCount++;
 	}
 	WriteFile(hFile, &entryCount, sizeof(entryCount), &written, NULL);
 
 	for (const auto& wd : _WindowData) {
-		if (wd.m_wndClass[0] == '\0' || wd.m_placements.empty())
+		if (wd.m_hwnd == NULL || wd.m_processId == 0 || !IsWindow(wd.m_hwnd) ||
+			wd.m_wndClass[0] == '\0' || wd.m_placements.empty())
 			continue;
+		UINT_PTR hwndValue = reinterpret_cast<UINT_PTR>(wd.m_hwnd);
+		WriteFile(hFile, &hwndValue, sizeof(hwndValue), &written, NULL);
+		WriteFile(hFile, &wd.m_processId, sizeof(wd.m_processId), &written, NULL);
 		WriteFile(hFile, wd.m_wndClass, sizeof(wd.m_wndClass), &written, NULL);
-		WriteFile(hFile, wd.m_processPath, sizeof(wd.m_processPath), &written, NULL);
-		WriteFile(hFile, wd.m_windowTitle, sizeof(wd.m_windowTitle), &written, NULL);
 		DWORD placementCount = (DWORD)wd.m_placements.size();
+		persistedPlacementCount += (int)placementCount;
 		WriteFile(hFile, &placementCount, sizeof(placementCount), &written, NULL);
 		for (const auto& pair : wd.m_placements) {
 			WriteFile(hFile, &pair.first, sizeof(pair.first), &written, NULL);
@@ -198,8 +278,8 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 
 	TCHAR message[512];
 	StringCchPrintf(message, _countof(message),
-		_T("Persisted %lu window record(s), %d placement(s), across %lu config snapshot(s) to disk (%s)"),
-		entryCount, CountTotalPlacements(), snapshotCount, (reason != NULL) ? reason : _T("unspecified"));
+		_T("Persisted %lu live window record(s), %d placement(s), across %lu config snapshot(s) for same-session recovery (%s)"),
+		entryCount, persistedPlacementCount, snapshotCount, (reason != NULL) ? reason : _T("unspecified"));
 	LOG_EVENT(_T("DISK"), message);
 	UpdateStatusPanel();
 	return TRUE;
@@ -237,14 +317,27 @@ void InstanceData::LoadFromDisk()
 
 	DWORD bytesRead;
 	DWORD magic = 0;
+	FILETIME bootMarkerUtc = {};
+	DWORD sessionId = 0;
 	if (!ReadFile(hFile, &magic, sizeof(magic), &bytesRead, NULL)) {
 		LogWin32Error(_T("WARNING"), _T("ReadFile for persistence magic"), GetLastError());
 		CloseHandle(hFile);
 		return;
 	}
-	if (magic != PERSIST_MAGIC_V2 && magic != PERSIST_MAGIC_V3 && magic != PERSIST_MAGIC_V4) {
+	if (magic != PERSIST_MAGIC_V5) {
 		LOG_EVENTF(_T("ERROR"), _T("Unsupported persisted data format on disk (magic=0x%08X, expected 0x%08X)"),
-			magic, PERSIST_MAGIC_V4);
+			magic, PERSIST_MAGIC_V5);
+		CloseHandle(hFile);
+		return;
+	}
+	if (!ReadFile(hFile, &bootMarkerUtc, sizeof(bootMarkerUtc), &bytesRead, NULL) || bytesRead != sizeof(bootMarkerUtc) ||
+		!ReadFile(hFile, &sessionId, sizeof(sessionId), &bytesRead, NULL) || bytesRead != sizeof(sessionId)) {
+		LogWin32Error(_T("WARNING"), _T("ReadFile for persistence session header"), GetLastError());
+		CloseHandle(hFile);
+		return;
+	}
+	if (!IsCompatiblePersistSession(bootMarkerUtc, sessionId)) {
+		LOG_EVENT(_T("DISK"), _T("Ignoring persisted positions captured in a different Windows session or boot"));
 		CloseHandle(hFile);
 		return;
 	}
@@ -263,28 +356,26 @@ void InstanceData::LoadFromDisk()
 	for (DWORD i = 0; i < snapshotCount; i++) {
 		UINT64 configHash = 0;
 		ConfigSnapshotInfo info;
+		DWORD monitorCount = 0;
 		if (!ReadFile(hFile, &configHash, sizeof(configHash), &bytesRead, NULL) || bytesRead != sizeof(configHash))
 			break;
 		if (!ReadFile(hFile, &info.lastSavedUtc, sizeof(info.lastSavedUtc), &bytesRead, NULL) || bytesRead != sizeof(info.lastSavedUtc))
 			break;
 		if (!ReadFile(hFile, &info.windowCount, sizeof(info.windowCount), &bytesRead, NULL) || bytesRead != sizeof(info.windowCount))
 			break;
-		if (magic == PERSIST_MAGIC_V3) {
-			DWORD monitorCount = 0;
-			if (!ReadFile(hFile, &monitorCount, sizeof(monitorCount), &bytesRead, NULL) || bytesRead != sizeof(monitorCount))
+		if (!ReadFile(hFile, &monitorCount, sizeof(monitorCount), &bytesRead, NULL) || bytesRead != sizeof(monitorCount))
+			break;
+		if (monitorCount > 64) {
+			LOG_EVENTF(_T("ERROR"), _T("Persisted monitor count is unreasonable: %lu"), monitorCount);
+			CloseHandle(hFile);
+			return;
+		}
+		info.monitorLayout.resize((size_t)monitorCount);
+		for (DWORD monitorIndex = 0; monitorIndex < monitorCount; ++monitorIndex) {
+			if (!ReadFile(hFile, &info.monitorLayout[(size_t)monitorIndex], sizeof(MonitorInfo), &bytesRead, NULL) ||
+				bytesRead != sizeof(MonitorInfo)) {
+				info.monitorLayout.resize((size_t)monitorIndex);
 				break;
-			if (monitorCount > 64) {
-				LOG_EVENTF(_T("ERROR"), _T("Persisted monitor count is unreasonable: %lu"), monitorCount);
-				CloseHandle(hFile);
-				return;
-			}
-			info.monitorLayout.resize((size_t)monitorCount);
-			for (DWORD monitorIndex = 0; monitorIndex < monitorCount; ++monitorIndex) {
-				if (!ReadFile(hFile, &info.monitorLayout[(size_t)monitorIndex], sizeof(MonitorInfo), &bytesRead, NULL) ||
-					bytesRead != sizeof(MonitorInfo)) {
-					info.monitorLayout.resize((size_t)monitorIndex);
-					break;
-				}
 			}
 		}
 		_ConfigSnapshots[configHash] = info;
@@ -300,21 +391,20 @@ void InstanceData::LoadFromDisk()
 		return;
 	}
 
+	DWORD loadedEntryCount = 0;
+	int loadedPlacementCount = 0;
+
 	for (DWORD e = 0; e < entryCount; e++) {
+		UINT_PTR hwndValue = 0;
+		DWORD processId = 0;
 		TCHAR wndClass[40];
-		TCHAR processPath[MAX_PATH] = _T("");
-		TCHAR windowTitle[256] = _T("");
+		if (!ReadFile(hFile, &hwndValue, sizeof(hwndValue), &bytesRead, NULL) || bytesRead != sizeof(hwndValue))
+			break;
+		if (!ReadFile(hFile, &processId, sizeof(processId), &bytesRead, NULL) || bytesRead != sizeof(processId))
+			break;
 		if (!ReadFile(hFile, wndClass, sizeof(wndClass), &bytesRead, NULL) || bytesRead != sizeof(wndClass))
 			break;
 		wndClass[39] = '\0';
-		if (magic == PERSIST_MAGIC_V4) {
-			if (!ReadFile(hFile, processPath, sizeof(processPath), &bytesRead, NULL) || bytesRead != sizeof(processPath))
-				break;
-			processPath[_countof(processPath) - 1] = '\0';
-			if (!ReadFile(hFile, windowTitle, sizeof(windowTitle), &bytesRead, NULL) || bytesRead != sizeof(windowTitle))
-				break;
-			windowTitle[_countof(windowTitle) - 1] = '\0';
-		}
 
 		DWORD placementCount = 0;
 		if (!ReadFile(hFile, &placementCount, sizeof(placementCount), &bytesRead, NULL))
@@ -322,21 +412,17 @@ void InstanceData::LoadFromDisk()
 		if (placementCount > MAX_CONFIGSLOTS) break;
 
 		SavedWindowData* pData = nullptr;
-		for (auto& wd : _WindowData) {
-			if (wd.m_hwnd == NULL && wd.m_wndClass[0] == '\0' && wd.m_placements.empty()) {
-				pData = &wd;
-				break;
+		HWND hwnd = reinterpret_cast<HWND>(hwndValue);
+		DWORD liveProcessId = 0;
+		TCHAR liveClass[40] = _T("");
+		if (hwnd != NULL && IsWindow(hwnd)) {
+			GetWindowThreadProcessId(hwnd, &liveProcessId);
+			RealGetWindowClass(hwnd, liveClass, _countof(liveClass));
+			if (liveProcessId == processId && lstrcmp(liveClass, wndClass) == 0) {
+				pData = FindWindowSlot(hwnd, processId, wndClass);
+				PopulateSavedWindowIdentity(*pData, hwnd, processId);
 			}
 		}
-		if (!pData) {
-			size_t oldSize = _WindowData.size();
-			_WindowData.resize(oldSize + 32);
-			pData = &_WindowData[oldSize];
-		}
-
-		lstrcpyn(pData->m_wndClass, wndClass, 40);
-		lstrcpyn(pData->m_processPath, processPath, _countof(pData->m_processPath));
-		lstrcpyn(pData->m_windowTitle, windowTitle, _countof(pData->m_windowTitle));
 
 		for (DWORD p = 0; p < placementCount; p++) {
 			UINT64 configHash;
@@ -345,21 +431,24 @@ void InstanceData::LoadFromDisk()
 				break;
 			if (!ReadFile(hFile, &wp, sizeof(wp), &bytesRead, NULL) || bytesRead != sizeof(wp))
 				break;
-			if (wp.length == sizeof(WINDOWPLACEMENT)) {
+			if (pData != NULL && wp.length == sizeof(WINDOWPLACEMENT)) {
 				pData->m_placements[configHash] = wp;
 				GetOrCreateConfigId(configHash);
+				loadedPlacementCount++;
 			}
+		}
+		if (pData != NULL) {
+			loadedEntryCount++;
 		}
 	}
 
 	CloseHandle(hFile);
 	_LastPersistUtc = lastWriteUtc;
-	PersistPositions = true;
 
 	TCHAR message[256];
 	StringCchPrintf(message, _countof(message),
-		_T("Loaded persisted data from disk (%lu window record(s), %d placement(s))"),
-		entryCount, CountTotalPlacements());
+		_T("Loaded persisted data from disk for same-session recovery (%lu window record(s), %d placement(s))"),
+		loadedEntryCount, loadedPlacementCount);
 	LOG_EVENT(_T("DISK"), message);
 }
 
