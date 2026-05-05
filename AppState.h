@@ -14,8 +14,12 @@
 #define DISPLAY_SETTLE_TIMER_ID 99
 #define DISPLAY_SETTLE_MS 2000
 #define VERIFY_TIMER_ID 4
-#define VERIFY_TIMER_MS 2000
-#define RESTORE_RETRY_LIMIT 4
+#define DEFAULT_RESTORE_RETRY_DELAY_SECONDS 2
+#define MIN_RESTORE_RETRY_DELAY_SECONDS 1
+#define MAX_RESTORE_RETRY_DELAY_SECONDS 30
+#define DEFAULT_RESTORE_RETRY_LIMIT 4
+#define MIN_RESTORE_RETRY_LIMIT 0
+#define MAX_RESTORE_RETRY_LIMIT 10
 #define PLACEMENT_TOLERANCE 20
 
 extern HINSTANCE hInst;
@@ -88,12 +92,24 @@ public:
 	HWND _hConfigSummary;
 	HWND _hPlacementList;
 	HWND _hReadmeView;
+	HWND _hSettingsIntro;
+	HWND _hSettingsRestoreCheck;
+	HWND _hSettingsAutostartCheck;
+	HWND _hSettingsPersistCheck;
+	HWND _hSettingsLoggingCheck;
+	HWND _hSettingsDelayLabel;
+	HWND _hSettingsDelayEdit;
+	HWND _hSettingsRetryLabel;
+	HWND _hSettingsRetryEdit;
+	HWND _hSettingsApplyButton;
 	HFONT _hLogFont;
 	BOOL InChangingState;
 	BOOL RestoreOnDisconnect;
 	BOOL PersistPositions;
 	BOOL LoggingEnabled;
 	BOOL AlreadyRunning;
+	int _RestoreRetryDelaySeconds;
+	int _RestoreRetryLimit;
 	int _RestoreRetryCount;
 	BOOL _AwaitingRestoreRetry;
 	HANDLE _MutexSingleInstance;

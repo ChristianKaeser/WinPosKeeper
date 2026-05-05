@@ -17,6 +17,7 @@ enum MainWindowTabPage {
 	MainWindowTabLog = 0,
 	MainWindowTabLayouts = 1,
 	MainWindowTabReadme = 2,
+	MainWindowTabSettings = 3,
 };
 
 static int GetSelectedMainTab()
@@ -44,6 +45,154 @@ static RECT GetMainTabContentRect(HWND hWnd)
 	return rect;
 }
 
+static void UpdateMainMenuChecks(HWND hWnd);
+
+static void ShowChildControl(HWND hWnd, BOOL show)
+{
+	if (hWnd != NULL) {
+		ShowWindow(hWnd, show ? SW_SHOW : SW_HIDE);
+	}
+}
+
+static void SaveCurrentSettings()
+{
+	auto& inst = InstanceData::g_Instance;
+	SaveSettings(inst.RestoreOnDisconnect,
+		inst.PersistPositions,
+		inst.LoggingEnabled,
+		inst._RestoreRetryDelaySeconds,
+		inst._RestoreRetryLimit);
+}
+
+static void SetCheckboxValue(HWND hWnd, BOOL checked)
+{
+	if (hWnd != NULL) {
+		SendMessage(hWnd, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+	}
+}
+
+static BOOL GetCheckboxValue(HWND hWnd)
+{
+	return hWnd != NULL && SendMessage(hWnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+static void SetIntegerControlValue(HWND hWnd, int value)
+{
+	if (hWnd != NULL) {
+		TCHAR buffer[32];
+		StringCchPrintf(buffer, _countof(buffer), _T("%d"), value);
+		SetWindowText(hWnd, buffer);
+	}
+}
+
+static void SyncSettingsControlsFromState()
+{
+	auto& inst = InstanceData::g_Instance;
+	SetCheckboxValue(inst._hSettingsRestoreCheck, inst.RestoreOnDisconnect);
+	SetCheckboxValue(inst._hSettingsAutostartCheck, IsAutostartEnabled());
+	SetCheckboxValue(inst._hSettingsPersistCheck, inst.PersistPositions);
+	SetCheckboxValue(inst._hSettingsLoggingCheck, inst.LoggingEnabled);
+	SetIntegerControlValue(inst._hSettingsDelayEdit, inst._RestoreRetryDelaySeconds);
+	SetIntegerControlValue(inst._hSettingsRetryEdit, inst._RestoreRetryLimit);
+}
+
+static BOOL TryReadSettingsInteger(HWND hWndOwner, HWND hEdit, LPCTSTR label,
+	int minValue, int maxValue, int* valueOut)
+{
+	TCHAR buffer[32];
+	GetWindowText(hEdit, buffer, _countof(buffer));
+
+	TCHAR* endPtr = NULL;
+	long parsed = _tcstol(buffer, &endPtr, 10);
+	if (buffer[0] == '\0' || endPtr == NULL || *endPtr != '\0' || parsed < minValue || parsed > maxValue) {
+		TCHAR message[256];
+		StringCchPrintf(message, _countof(message),
+			_T("%s must be a whole number between %d and %d."),
+			label, minValue, maxValue);
+		MessageBox(hWndOwner, message, _T("WinPosKeeper Settings"), MB_OK | MB_ICONWARNING);
+		SetFocus(hEdit);
+		SendMessage(hEdit, EM_SETSEL, 0, -1);
+		return FALSE;
+	}
+
+	*valueOut = (int)parsed;
+	return TRUE;
+}
+
+static void ApplySettingsFromControls(HWND hWnd)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hSettingsDelayEdit == NULL || inst._hSettingsRetryEdit == NULL) {
+		return;
+	}
+
+	int delaySeconds = inst._RestoreRetryDelaySeconds;
+	int retryLimit = inst._RestoreRetryLimit;
+	if (!TryReadSettingsInteger(hWnd, inst._hSettingsDelayEdit, _T("Restore verification delay"),
+		MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS, &delaySeconds)) {
+		return;
+	}
+	if (!TryReadSettingsInteger(hWnd, inst._hSettingsRetryEdit, _T("Retry count"),
+		MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT, &retryLimit)) {
+		return;
+	}
+
+	BOOL newRestoreOnDisconnect = GetCheckboxValue(inst._hSettingsRestoreCheck);
+	BOOL newAutostart = GetCheckboxValue(inst._hSettingsAutostartCheck);
+	BOOL newPersistPositions = GetCheckboxValue(inst._hSettingsPersistCheck);
+	BOOL newLoggingEnabled = GetCheckboxValue(inst._hSettingsLoggingCheck);
+	BOOL oldAutostart = IsAutostartEnabled();
+	BOOL oldLoggingEnabled = inst.LoggingEnabled;
+	BOOL persistenceWasDisabled = !inst.PersistPositions && newPersistPositions;
+
+	BOOL changed =
+		inst.RestoreOnDisconnect != newRestoreOnDisconnect ||
+		oldAutostart != newAutostart ||
+		inst.PersistPositions != newPersistPositions ||
+		inst.LoggingEnabled != newLoggingEnabled ||
+		inst._RestoreRetryDelaySeconds != delaySeconds ||
+		inst._RestoreRetryLimit != retryLimit;
+	if (!changed) {
+		SyncSettingsControlsFromState();
+		return;
+	}
+
+	TCHAR summary[512];
+	StringCchPrintf(summary, _countof(summary),
+		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, retry delay=%d s, retry limit=%d"),
+		newRestoreOnDisconnect ? _T("ON") : _T("OFF"),
+		newAutostart ? _T("ON") : _T("OFF"),
+		newPersistPositions ? _T("ON") : _T("OFF"),
+		newLoggingEnabled ? _T("ON") : _T("OFF"),
+		delaySeconds,
+		retryLimit);
+
+	if (oldLoggingEnabled && !newLoggingEnabled) {
+		LogEvent(_T("INFO"), summary);
+	}
+
+	inst.RestoreOnDisconnect = newRestoreOnDisconnect;
+	inst.PersistPositions = newPersistPositions;
+	inst._RestoreRetryDelaySeconds = delaySeconds;
+	inst._RestoreRetryLimit = retryLimit;
+	if (oldAutostart != newAutostart) {
+		SetAutostart(newAutostart);
+	}
+	inst.LoggingEnabled = newLoggingEnabled;
+
+	SaveCurrentSettings();
+	UpdateMainMenuChecks(hWnd);
+	UpdateLoggingUiState();
+	SyncSettingsControlsFromState();
+	if (inst.LoggingEnabled) {
+		LogEvent(_T("INFO"), summary);
+	}
+	if (persistenceWasDisabled) {
+		inst.SaveToDisk(_T("persistence enabled from settings"));
+	}
+	UpdateStatusPanel();
+}
+
 static void UpdateMainTabVisibility(HWND hWnd)
 {
 	UNREFERENCED_PARAMETER(hWnd);
@@ -51,28 +200,32 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	BOOL showLog = selectedTab == MainWindowTabLog ? TRUE : FALSE;
 	BOOL showLayouts = selectedTab == MainWindowTabLayouts ? TRUE : FALSE;
 	BOOL showReadme = selectedTab == MainWindowTabReadme ? TRUE : FALSE;
+	BOOL showSettings = selectedTab == MainWindowTabSettings ? TRUE : FALSE;
 
-	if (InstanceData::g_Instance._hLogList) {
-		ShowWindow(InstanceData::g_Instance._hLogList, showLog ? SW_SHOW : SW_HIDE);
-	}
-	if (InstanceData::g_Instance._hConfigList) {
-		ShowWindow(InstanceData::g_Instance._hConfigList, showLayouts ? SW_SHOW : SW_HIDE);
-	}
-	if (InstanceData::g_Instance._hConfigSummary) {
-		ShowWindow(InstanceData::g_Instance._hConfigSummary, showLayouts ? SW_SHOW : SW_HIDE);
-	}
-	if (InstanceData::g_Instance._hPlacementList) {
-		ShowWindow(InstanceData::g_Instance._hPlacementList, showLayouts ? SW_SHOW : SW_HIDE);
-	}
-	if (InstanceData::g_Instance._hReadmeView) {
-		ShowWindow(InstanceData::g_Instance._hReadmeView, showReadme ? SW_SHOW : SW_HIDE);
-	}
+	ShowChildControl(InstanceData::g_Instance._hLogList, showLog);
+	ShowChildControl(InstanceData::g_Instance._hConfigList, showLayouts);
+	ShowChildControl(InstanceData::g_Instance._hConfigSummary, showLayouts);
+	ShowChildControl(InstanceData::g_Instance._hPlacementList, showLayouts);
+	ShowChildControl(InstanceData::g_Instance._hReadmeView, showReadme);
+	ShowChildControl(InstanceData::g_Instance._hSettingsIntro, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsRestoreCheck, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsAutostartCheck, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsPersistCheck, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsLoggingCheck, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsDelayLabel, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsDelayEdit, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsRetryLabel, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsRetryEdit, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsApplyButton, showSettings);
 
 	if (showLayouts) {
 		RefreshPlacementInspector();
 	}
 	if (showReadme) {
 		RefreshReadmeView();
+	}
+	if (showSettings) {
+		SyncSettingsControlsFromState();
 	}
 }
 
@@ -116,6 +269,43 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 	if (InstanceData::g_Instance._hReadmeView) {
 		MoveWindow(InstanceData::g_Instance._hReadmeView,
 			contentRect.left, contentRect.top, contentWidth, contentHeight, TRUE);
+	}
+	if (InstanceData::g_Instance._hSettingsIntro) {
+		int introHeight = min(120, max(84, contentHeight / 3));
+		int rowHeight = 22;
+		int y = contentRect.top;
+		int labelWidth = min(260, max(200, contentWidth / 2));
+		int editWidth = 64;
+
+		MoveWindow(InstanceData::g_Instance._hSettingsIntro,
+			contentRect.left, y, contentWidth, introHeight, TRUE);
+		y += introHeight + 10;
+
+		MoveWindow(InstanceData::g_Instance._hSettingsRestoreCheck,
+			contentRect.left, y, contentWidth, rowHeight, TRUE);
+		y += rowHeight + 2;
+		MoveWindow(InstanceData::g_Instance._hSettingsAutostartCheck,
+			contentRect.left, y, contentWidth, rowHeight, TRUE);
+		y += rowHeight + 2;
+		MoveWindow(InstanceData::g_Instance._hSettingsPersistCheck,
+			contentRect.left, y, contentWidth, rowHeight, TRUE);
+		y += rowHeight + 2;
+		MoveWindow(InstanceData::g_Instance._hSettingsLoggingCheck,
+			contentRect.left, y, contentWidth, rowHeight, TRUE);
+		y += rowHeight + 10;
+
+		MoveWindow(InstanceData::g_Instance._hSettingsDelayLabel,
+			contentRect.left, y + 3, labelWidth, rowHeight, TRUE);
+		MoveWindow(InstanceData::g_Instance._hSettingsDelayEdit,
+			contentRect.left + labelWidth + 8, y, editWidth, rowHeight + 2, TRUE);
+		y += rowHeight + 8;
+		MoveWindow(InstanceData::g_Instance._hSettingsRetryLabel,
+			contentRect.left, y + 3, labelWidth, rowHeight, TRUE);
+		MoveWindow(InstanceData::g_Instance._hSettingsRetryEdit,
+			contentRect.left + labelWidth + 8, y, editWidth, rowHeight + 2, TRUE);
+		y += rowHeight + 12;
+		MoveWindow(InstanceData::g_Instance._hSettingsApplyButton,
+			contentRect.left, y, 132, rowHeight + 6, TRUE);
 	}
 
 	int selectorHeight = min(88, max(56, contentHeight / 6));
@@ -284,11 +474,64 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
 		4, STATUS_HEIGHT + 8, 690, 400,
 		hWnd, (HMENU)IDC_README_VIEW, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsIntro = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"),
+		_T("The quick tray/menu toggles are mirrored here, together with the restore retry timing.\r\n\r\n")
+		_T("Disk persistence only stores same-session restart recovery data for still-running windows. It is not used to guess matches across a new Windows boot or session."),
+		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
+		4, STATUS_HEIGHT + 8, 690, 120,
+		hWnd, (HMENU)IDC_SETTINGS_INTRO, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsRestoreCheck = CreateWindowEx(0, _T("BUTTON"),
+		_T("Restore saved positions after a monitor disconnect or display-settle event"),
+		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
+		4, STATUS_HEIGHT + 136, 690, 20,
+		hWnd, (HMENU)IDC_SETTINGS_RESTORE_CHECK, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsAutostartCheck = CreateWindowEx(0, _T("BUTTON"),
+		_T("Start WinPosKeeper with Windows"),
+		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
+		4, STATUS_HEIGHT + 160, 690, 20,
+		hWnd, (HMENU)IDC_SETTINGS_AUTOSTART_CHECK, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsPersistCheck = CreateWindowEx(0, _T("BUTTON"),
+		_T("Keep same-session restart recovery data on disk"),
+		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
+		4, STATUS_HEIGHT + 184, 690, 20,
+		hWnd, (HMENU)IDC_SETTINGS_PERSIST_CHECK, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsLoggingCheck = CreateWindowEx(0, _T("BUTTON"),
+		_T("Record diagnostic messages in the Log tab"),
+		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
+		4, STATUS_HEIGHT + 208, 690, 20,
+		hWnd, (HMENU)IDC_SETTINGS_LOGGING_CHECK, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsDelayLabel = CreateWindowEx(0, _T("STATIC"),
+		_T("Restore verification delay (seconds):"),
+		WS_CHILD,
+		4, STATUS_HEIGHT + 236, 240, 20,
+		hWnd, (HMENU)IDC_SETTINGS_DELAY_LABEL, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsDelayEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("2"),
+		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
+		248, STATUS_HEIGHT + 232, 64, 24,
+		hWnd, (HMENU)IDC_SETTINGS_DELAY_EDIT, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsRetryLabel = CreateWindowEx(0, _T("STATIC"),
+		_T("Additional restore retries after mismatch:"),
+		WS_CHILD,
+		4, STATUS_HEIGHT + 264, 240, 20,
+		hWnd, (HMENU)IDC_SETTINGS_RETRY_LABEL, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsRetryEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("4"),
+		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
+		248, STATUS_HEIGHT + 260, 64, 24,
+		hWnd, (HMENU)IDC_SETTINGS_RETRY_EDIT, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsApplyButton = CreateWindowEx(0, _T("BUTTON"), _T("Apply Settings"),
+		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+		4, STATUS_HEIGHT + 292, 132, 28,
+		hWnd, (HMENU)IDC_SETTINGS_APPLY, hInstance, NULL);
 
 	if (InstanceData::g_Instance._hMainTab == NULL || InstanceData::g_Instance._hStatus == NULL ||
 		InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL ||
 		InstanceData::g_Instance._hConfigList == NULL || InstanceData::g_Instance._hConfigSummary == NULL ||
-		InstanceData::g_Instance._hPlacementList == NULL || InstanceData::g_Instance._hReadmeView == NULL) {
+		InstanceData::g_Instance._hPlacementList == NULL || InstanceData::g_Instance._hReadmeView == NULL ||
+		InstanceData::g_Instance._hSettingsIntro == NULL || InstanceData::g_Instance._hSettingsRestoreCheck == NULL ||
+		InstanceData::g_Instance._hSettingsAutostartCheck == NULL || InstanceData::g_Instance._hSettingsPersistCheck == NULL ||
+		InstanceData::g_Instance._hSettingsLoggingCheck == NULL || InstanceData::g_Instance._hSettingsDelayLabel == NULL ||
+		InstanceData::g_Instance._hSettingsDelayEdit == NULL || InstanceData::g_Instance._hSettingsRetryLabel == NULL ||
+		InstanceData::g_Instance._hSettingsRetryEdit == NULL || InstanceData::g_Instance._hSettingsApplyButton == NULL) {
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
@@ -301,6 +544,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabLayouts, &tie);
 	tie.pszText = const_cast<LPTSTR>(_T("README"));
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabReadme, &tie);
+	tie.pszText = const_cast<LPTSTR>(_T("Settings"));
+	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabSettings, &tie);
 	TabCtrl_SetCurSel(InstanceData::g_Instance._hMainTab, MainWindowTabLog);
 	InstanceData::g_Instance._InspectorSelectedConfigHash = 0;
 	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON,
@@ -326,13 +571,26 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
 	SendMessage(InstanceData::g_Instance._hReadmeView, WM_SETFONT,
 		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsIntro, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsRestoreCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsAutostartCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsPersistCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsLoggingCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsDelayLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsDelayEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsRetryLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsRetryEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsApplyButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
 	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 12288, 0);
 	SendMessage(InstanceData::g_Instance._hPlacementList, LB_SETHORIZONTALEXTENT, 8192, 0);
 
 	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 		InstanceData::g_Instance.PersistPositions,
-		InstanceData::g_Instance.LoggingEnabled);
+		InstanceData::g_Instance.LoggingEnabled,
+		InstanceData::g_Instance._RestoreRetryDelaySeconds,
+		InstanceData::g_Instance._RestoreRetryLimit);
+	SyncSettingsControlsFromState();
 	InstanceData::g_Instance.LoadFromDisk();
 
 	InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
@@ -380,6 +638,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				RefreshPlacementInspector();
 				return 0;
 			}
+			if (LOWORD(wParam) == IDC_SETTINGS_APPLY && HIWORD(wParam) == BN_CLICKED) {
+				ApplySettingsFromControls(hWnd);
+				return 0;
+			}
 
 			int wmId = LOWORD(wParam);
 			switch (wmId)
@@ -399,9 +661,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			case IDM_RESTORE_ON_DISCONNECT:
 				InstanceData::g_Instance.RestoreOnDisconnect = !InstanceData::g_Instance.RestoreOnDisconnect;
 				UpdateMainMenuChecks(hWnd);
-				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
-					InstanceData::g_Instance.PersistPositions,
-					InstanceData::g_Instance.LoggingEnabled);
+				SaveCurrentSettings();
+				SyncSettingsControlsFromState();
 				LOG_EVENT(_T("INFO"), InstanceData::g_Instance.RestoreOnDisconnect
 					? _T("Restore-on-disconnect enabled")
 					: _T("Restore-on-disconnect disabled"));
@@ -412,6 +673,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					BOOL enabled = IsAutostartEnabled();
 					SetAutostart(!enabled);
 					UpdateMainMenuChecks(hWnd);
+					SyncSettingsControlsFromState();
 					LOG_EVENT(_T("INFO"), !enabled ? _T("Autostart enabled") : _T("Autostart disabled"));
 					UpdateStatusPanel();
 				}
@@ -419,9 +681,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			case IDM_PERSIST_POSITIONS:
 				InstanceData::g_Instance.PersistPositions = !InstanceData::g_Instance.PersistPositions;
 				UpdateMainMenuChecks(hWnd);
-				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
-					InstanceData::g_Instance.PersistPositions,
-					InstanceData::g_Instance.LoggingEnabled);
+				SaveCurrentSettings();
+				SyncSettingsControlsFromState();
 				LOG_EVENT(_T("INFO"), InstanceData::g_Instance.PersistPositions
 					? _T("Disk persistence enabled")
 					: _T("Disk persistence disabled"));
@@ -440,9 +701,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					LogEvent(_T("INFO"), _T("Event logging enabled"));
 				}
 				UpdateMainMenuChecks(hWnd);
-				SaveSettings(InstanceData::g_Instance.RestoreOnDisconnect,
-					InstanceData::g_Instance.PersistPositions,
-					InstanceData::g_Instance.LoggingEnabled);
+				SaveCurrentSettings();
+				SyncSettingsControlsFromState();
 				UpdateLoggingUiState();
 				UpdateStatusPanel();
 				break;

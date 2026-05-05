@@ -4,6 +4,8 @@
 
 BOOL IsAutostartEnabled();
 void SetAutostart(BOOL enable);
-void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled);
-void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled);
+void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled,
+	int restoreRetryDelaySeconds, int restoreRetryLimit);
+void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled,
+	int& restoreRetryDelaySeconds, int& restoreRetryLimit);
 VOID CALLBACK PersistTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime);

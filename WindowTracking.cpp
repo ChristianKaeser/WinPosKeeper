@@ -224,11 +224,23 @@ InstanceData::InstanceData()
 	_hConfigSummary = NULL;
 	_hPlacementList = NULL;
 	_hReadmeView = NULL;
+	_hSettingsIntro = NULL;
+	_hSettingsRestoreCheck = NULL;
+	_hSettingsAutostartCheck = NULL;
+	_hSettingsPersistCheck = NULL;
+	_hSettingsLoggingCheck = NULL;
+	_hSettingsDelayLabel = NULL;
+	_hSettingsDelayEdit = NULL;
+	_hSettingsRetryLabel = NULL;
+	_hSettingsRetryEdit = NULL;
+	_hSettingsApplyButton = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
 	RestoreOnDisconnect = true;
 	PersistPositions = false;
 	LoggingEnabled = true;
+	_RestoreRetryDelaySeconds = DEFAULT_RESTORE_RETRY_DELAY_SECONDS;
+	_RestoreRetryLimit = DEFAULT_RESTORE_RETRY_LIMIT;
 	_RestoreRetryCount = 0;
 	_AwaitingRestoreRetry = FALSE;
 	_InspectorSelectedConfigHash = 0;
@@ -646,15 +658,15 @@ void RetryPendingRestores()
 	if (accessDeniedCount > 0) {
 		LOG_EVENTF(_T("RESTORE"),
 			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded and %d access-denied window(s) will be ignored"),
-			inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, pendingCount, successfulCalls, accessDeniedCount);
+			inst._RestoreRetryCount, inst._RestoreRetryLimit, pendingCount, successfulCalls, accessDeniedCount);
 	}
 	else {
 		LOG_EVENTF(_T("RESTORE"),
 			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded"),
-			inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, pendingCount, successfulCalls);
+			inst._RestoreRetryCount, inst._RestoreRetryLimit, pendingCount, successfulCalls);
 	}
 
-	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelaySeconds * 1000, NULL);
 	UpdateStatusPanel();
 }
 
@@ -724,20 +736,20 @@ void VerifyRestoredWindows()
 		ProcessDesktopWindows();
 		return;
 	}
-	else if (inst._RestoreRetryCount < RESTORE_RETRY_LIMIT) {
+	else if (inst._RestoreRetryCount < inst._RestoreRetryLimit) {
 		inst._RestoreRetryCount++;
 		inst._AwaitingRestoreRetry = TRUE;
 		if (ignoredAccessDenied > 0) {
 			LOG_EVENTF(_T("VERIFY"),
 				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d. Ignoring %d access-denied window(s)"),
-				mismatchCount, VERIFY_TIMER_MS / 1000, inst._RestoreRetryCount, RESTORE_RETRY_LIMIT, ignoredAccessDenied);
+				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit, ignoredAccessDenied);
 		}
 		else {
 			LOG_EVENTF(_T("VERIFY"),
 				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d"),
-				mismatchCount, VERIFY_TIMER_MS / 1000, inst._RestoreRetryCount, RESTORE_RETRY_LIMIT);
+				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit);
 		}
-		SetTimer(inst._MainWnd, VERIFY_TIMER_ID, VERIFY_TIMER_MS, NULL);
+		SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelaySeconds * 1000, NULL);
 		UpdateStatusPanel();
 		return;
 	}

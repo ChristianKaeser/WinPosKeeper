@@ -64,6 +64,17 @@ static DWORD GetCurrentSessionIdValue()
 	return sessionId;
 }
 
+static int ClampSettingInt(int value, int minValue, int maxValue)
+{
+	if (value < minValue) {
+		return minValue;
+	}
+	if (value > maxValue) {
+		return maxValue;
+	}
+	return value;
+}
+
 static BOOL IsCompatiblePersistSession(const FILETIME& bootMarkerUtc, DWORD sessionId)
 {
 	if (sessionId != GetCurrentSessionIdValue()) {
@@ -150,7 +161,8 @@ void SetAutostart(BOOL enable)
 	RegCloseKey(hKey);
 }
 
-void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled)
+void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled,
+	int restoreRetryDelaySeconds, int restoreRetryLimit)
 {
 	HKEY hKey;
 	LONG status = RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
@@ -171,10 +183,21 @@ void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingE
 	status = RegSetValueEx(hKey, _T("LoggingEnabled"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
 	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx LoggingEnabled"), status);
+	val = (DWORD)ClampSettingInt(restoreRetryDelaySeconds,
+		MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS);
+	status = RegSetValueEx(hKey, _T("RestoreRetryDelaySeconds"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreRetryDelaySeconds"), status);
+	val = (DWORD)ClampSettingInt(restoreRetryLimit,
+		MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT);
+	status = RegSetValueEx(hKey, _T("RestoreRetryLimit"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreRetryLimit"), status);
 	RegCloseKey(hKey);
 }
 
-void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled)
+void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled,
+	int& restoreRetryDelaySeconds, int& restoreRetryLimit)
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
@@ -203,6 +226,18 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 	if (RegQueryValueEx(hKey, _T("LoggingEnabled"), NULL, NULL,
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
 		loggingEnabled = val ? TRUE : FALSE;
+	size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("RestoreRetryDelaySeconds"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+		restoreRetryDelaySeconds = ClampSettingInt((int)val,
+			MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS);
+	}
+	size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("RestoreRetryLimit"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+		restoreRetryLimit = ClampSettingInt((int)val,
+			MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT);
+	}
 	RegCloseKey(hKey);
 }
 
