@@ -13,3 +13,6 @@ VOID CALLBACK SaveTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dw
 void CancelPendingRestores();
 void RetryPendingRestores();
 void VerifyRestoredWindows();
+void CaptureWindowHistoryEvent(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture);
+void ClearWindowHistoryTracking();
+void PrimeWindowHistoryTracking(LPCTSTR reason);

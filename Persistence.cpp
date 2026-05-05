@@ -162,7 +162,7 @@ void SetAutostart(BOOL enable)
 }
 
 void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled,
-	int restoreRetryDelaySeconds, int restoreRetryLimit)
+	int restoreRetryDelaySeconds, int restoreRetryLimit, BOOL historyTrackingEnabled)
 {
 	HKEY hKey;
 	LONG status = RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
@@ -193,11 +193,15 @@ void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingE
 	status = RegSetValueEx(hKey, _T("RestoreRetryLimit"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
 	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreRetryLimit"), status);
+	val = historyTrackingEnabled ? 1 : 0;
+	status = RegSetValueEx(hKey, _T("HistoryTrackingEnabled"), 0, REG_DWORD,
+		reinterpret_cast<const BYTE*>(&val), sizeof(val));
+	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx HistoryTrackingEnabled"), status);
 	RegCloseKey(hKey);
 }
 
 void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled,
-	int& restoreRetryDelaySeconds, int& restoreRetryLimit)
+	int& restoreRetryDelaySeconds, int& restoreRetryLimit, BOOL& historyTrackingEnabled)
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
@@ -237,6 +241,11 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
 		restoreRetryLimit = ClampSettingInt((int)val,
 			MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT);
+	}
+	size = sizeof(val);
+	if (RegQueryValueEx(hKey, _T("HistoryTrackingEnabled"), NULL, NULL,
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+		historyTrackingEnabled = val ? TRUE : FALSE;
 	}
 	RegCloseKey(hKey);
 }

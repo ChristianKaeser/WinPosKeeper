@@ -39,6 +39,11 @@
 #define IDC_SETTINGS_RETRY_LABEL        1012
 #define IDC_SETTINGS_RETRY_EDIT         1013
 #define IDC_SETTINGS_APPLY              1014
+#define IDC_SETTINGS_HISTORY_CHECK      1015
+#define IDC_HISTORY_WINDOW_LIST         1016
+#define IDC_HISTORY_SUMMARY             1017
+#define IDC_HISTORY_TIMELINE_LIST       1018
+#define IDC_HISTORY_EXPORT              1019
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -48,7 +53,7 @@
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        131
 #define _APS_NEXT_COMMAND_VALUE         32782
-#define _APS_NEXT_CONTROL_VALUE         1015
+#define _APS_NEXT_CONTROL_VALUE         1020
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif

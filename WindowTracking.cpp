@@ -69,6 +69,34 @@ static void ReadWindowIdentity(HWND hwnd, TCHAR* wndClass, size_t cchWndClass,
 }
 
 static void FormatRectTransitionForLog(const RECT* fromRect, const RECT* toRect, TCHAR* buffer, size_t cchBuffer);
+static BOOL IsTrackableTopLevelWindow(HWND hwnd);
+static void MarkWindowHistorySelfAction(HWND hwnd);
+static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture);
+
+WindowHistoryEntry::WindowHistoryEntry()
+{
+	ZeroMemory(&recordedUtc, sizeof(recordedUtc));
+	SetRectEmpty(&rect);
+	showCmd = SW_SHOWNORMAL;
+	hasPlacement = FALSE;
+	sequence = 0;
+}
+
+HistoryLogEntry::HistoryLogEntry()
+{
+	ZeroMemory(&recordedUtc, sizeof(recordedUtc));
+	sequence = 0;
+}
+
+WindowHistoryData::WindowHistoryData()
+{
+	hwndValue = 0;
+	processId = 0;
+	ZeroMemory(&lastRecordedUtc, sizeof(lastRecordedUtc));
+	ZeroMemory(&lastPlacement, sizeof(lastPlacement));
+	hasLastPlacement = FALSE;
+	pendingSelfActionUntilTick = 0;
+}
 
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
 {
@@ -155,6 +183,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	WINDOWPLACEMENT place = it->second;
 	TCHAR identity[512];
 	TCHAR rectTransition[160];
+	MarkWindowHistorySelfAction(m_hwnd);
 	FormatWindowIdentity(m_hwnd, m_processId, m_wndClass, m_processPath, m_windowTitle, identity, _countof(identity));
 	FormatRectTransitionForLog(haveActualPlacement ? &actual.rcNormalPosition : NULL, &place.rcNormalPosition,
 		rectTransition, _countof(rectTransition));
@@ -229,20 +258,28 @@ InstanceData::InstanceData()
 	_hSettingsAutostartCheck = NULL;
 	_hSettingsPersistCheck = NULL;
 	_hSettingsLoggingCheck = NULL;
+	_hSettingsHistoryCheck = NULL;
 	_hSettingsDelayLabel = NULL;
 	_hSettingsDelayEdit = NULL;
 	_hSettingsRetryLabel = NULL;
 	_hSettingsRetryEdit = NULL;
 	_hSettingsApplyButton = NULL;
+	_hHistoryWindowList = NULL;
+	_hHistorySummary = NULL;
+	_hHistoryTimelineList = NULL;
+	_hHistoryExportButton = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
 	RestoreOnDisconnect = true;
 	PersistPositions = false;
 	LoggingEnabled = true;
+	_HistoryTrackingEnabled = FALSE;
 	_RestoreRetryDelaySeconds = DEFAULT_RESTORE_RETRY_DELAY_SECONDS;
 	_RestoreRetryLimit = DEFAULT_RESTORE_RETRY_LIMIT;
 	_RestoreRetryCount = 0;
 	_AwaitingRestoreRetry = FALSE;
+	_HistorySelectedHwnd = 0;
+	_HistoryNextSequence = 0;
 	_InspectorSelectedConfigHash = 0;
 	_LastCaptureUtc.dwLowDateTime = 0;
 	_LastCaptureUtc.dwHighDateTime = 0;
@@ -270,6 +307,10 @@ void InstanceData::Shutdown()
 	_ConfigSnapshots.clear();
 	_InspectorConfigHashes.clear();
 	_InspectorSelectedConfigHash = 0;
+	_HistoryWindowKeys.clear();
+	_HistorySelectedHwnd = 0;
+	_HistoryLog.clear();
+	_WindowHistory.clear();
 	_ReadmeText.clear();
 
 	if (_hLogFont != NULL)
@@ -451,6 +492,145 @@ SavedWindowData* InstanceData::FindWindowSlot(HWND hwnd, DWORD processId, LPCTST
 	return &_WindowData[oldSize];
 }
 
+static ULONGLONG NextHistorySequence()
+{
+	return ++InstanceData::g_Instance._HistoryNextSequence;
+}
+
+static BOOL WindowPlacementsMatchExactly(const WINDOWPLACEMENT& left, const WINDOWPLACEMENT& right)
+{
+	return left.showCmd == right.showCmd &&
+		left.rcNormalPosition.left == right.rcNormalPosition.left &&
+		left.rcNormalPosition.top == right.rcNormalPosition.top &&
+		left.rcNormalPosition.right == right.rcNormalPosition.right &&
+		left.rcNormalPosition.bottom == right.rcNormalPosition.bottom;
+}
+
+static BOOL IsTrackableTopLevelWindow(HWND hwnd)
+{
+	if (hwnd == NULL || !IsWindow(hwnd) || !IsWindowVisible(hwnd) || GetParent(hwnd) != NULL) {
+		return FALSE;
+	}
+
+	DWORD style = (DWORD)GetWindowLong(hwnd, GWL_STYLE);
+	DWORD exStyle = (DWORD)GetWindowLong(hwnd, GWL_EXSTYLE);
+	return (((style & WS_OVERLAPPEDWINDOW) != 0 || (exStyle & WS_EX_APPWINDOW) != 0) &&
+		(exStyle & WS_EX_NOACTIVATE) == 0) ? TRUE : FALSE;
+}
+
+static WindowHistoryData& GetOrCreateWindowHistory(HWND hwnd, DWORD processId,
+	LPCTSTR wndClass, LPCTSTR processPath, LPCTSTR windowTitle)
+{
+	auto& inst = InstanceData::g_Instance;
+	UINT_PTR hwndValue = reinterpret_cast<UINT_PTR>(hwnd);
+	WindowHistoryData& history = inst._WindowHistory[hwndValue];
+	if (history.hwndValue != 0 &&
+		(history.processId != processId ||
+			(wndClass != NULL && !history.windowClass.empty() && history.windowClass != wndClass))) {
+		history = WindowHistoryData();
+	}
+
+	history.hwndValue = hwndValue;
+	history.processId = processId;
+	history.windowClass = wndClass != NULL ? wndClass : _T("");
+	history.processPath = processPath != NULL ? processPath : _T("");
+	history.latestTitle = windowTitle != NULL ? windowTitle : _T("");
+	return history;
+}
+
+static LPCTSTR ResolveWindowHistorySource(WindowHistoryData& history, LPCTSTR sourceOverride)
+{
+	if (sourceOverride != NULL && sourceOverride[0] != '\0') {
+		return sourceOverride;
+	}
+
+	ULONGLONG nowTick = GetTickCount64();
+	if (history.pendingSelfActionUntilTick != 0 && nowTick <= history.pendingSelfActionUntilTick) {
+		history.pendingSelfActionUntilTick = 0;
+		return _T("winposkeeper");
+	}
+
+	history.pendingSelfActionUntilTick = 0;
+	return InstanceData::g_Instance.InChangingState ? _T("display/system") : _T("external/system");
+}
+
+static void TrimWindowHistory(WindowHistoryData& history)
+{
+	if (history.entries.size() > MAX_HISTORY_ENTRIES_PER_WINDOW) {
+		history.entries.erase(history.entries.begin(),
+			history.entries.begin() + (history.entries.size() - MAX_HISTORY_ENTRIES_PER_WINDOW));
+	}
+}
+
+static void MarkWindowHistorySelfAction(HWND hwnd)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled || hwnd == NULL) {
+		return;
+	}
+
+	WindowHistoryData& history = inst._WindowHistory[reinterpret_cast<UINT_PTR>(hwnd)];
+	if (history.hwndValue == 0) {
+		history.hwndValue = reinterpret_cast<UINT_PTR>(hwnd);
+	}
+	history.pendingSelfActionUntilTick = GetTickCount64() + 3000;
+}
+
+static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled || !IsTrackableTopLevelWindow(hwnd)) {
+		return;
+	}
+
+	TCHAR wndClass[40];
+	TCHAR processPath[MAX_PATH];
+	TCHAR windowTitle[256];
+	DWORD processId = 0;
+	ReadWindowIdentity(hwnd,
+		wndClass, _countof(wndClass),
+		processPath, _countof(processPath),
+		windowTitle, _countof(windowTitle),
+		&processId);
+	if (wndClass[0] == '\0' || processId == 0) {
+		return;
+	}
+
+	WINDOWPLACEMENT placement = {};
+	placement.length = sizeof(placement);
+	if (!GetWindowPlacement(hwnd, &placement)) {
+		return;
+	}
+
+	WindowHistoryData& history = GetOrCreateWindowHistory(hwnd, processId, wndClass, processPath, windowTitle);
+	if (!forceCapture && history.hasLastPlacement && WindowPlacementsMatchExactly(history.lastPlacement, placement) &&
+		history.latestTitle == windowTitle) {
+		return;
+	}
+
+	WindowHistoryEntry entry;
+	GetSystemTimeAsFileTime(&entry.recordedUtc);
+	entry.rect = placement.rcNormalPosition;
+	entry.showCmd = placement.showCmd;
+	entry.hasPlacement = TRUE;
+	entry.sequence = NextHistorySequence();
+	entry.source = ResolveWindowHistorySource(history, sourceOverride);
+	entry.detail = (detail != NULL && detail[0] != '\0') ? detail : _T("location change");
+	entry.windowTitle = windowTitle;
+	history.lastRecordedUtc = entry.recordedUtc;
+	history.lastPlacement = placement;
+	history.hasLastPlacement = TRUE;
+	history.latestTitle = windowTitle;
+	history.entries.push_back(entry);
+	TrimWindowHistory(history);
+	RefreshWindowHistoryInspector();
+}
+
+void CaptureWindowHistoryEvent(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
+{
+	RecordWindowHistorySnapshot(hwnd, sourceOverride, detail, forceCapture);
+}
+
 LPCTSTR TranslateShowCommand(int nShowCmd)
 {
 	switch (nShowCmd)
@@ -573,28 +753,21 @@ BOOL CALLBACK SaveWindowsCallback(HWND hwnd, LPARAM lParam)
 {
 	UINT64 configHash = InstanceData::g_Instance._ConfigHash;
 
-	if (IsWindowVisible(hwnd) && GetParent(hwnd) == NULL) {
-		DWORD dwStyle = (DWORD)GetWindowLong(hwnd, GWL_STYLE);
-		DWORD dwExStyle = (DWORD)GetWindowLong(hwnd, GWL_EXSTYLE);
-		if (((dwStyle & (WS_OVERLAPPEDWINDOW)) != 0 ||
-			(dwExStyle & WS_EX_APPWINDOW) != 0) &&
-			(dwExStyle & (WS_EX_NOACTIVATE)) == 0)
+	if (IsTrackableTopLevelWindow(hwnd)) {
+		TCHAR wndClass[40];
+		TCHAR processPath[MAX_PATH];
+		TCHAR windowTitle[256];
+		DWORD processId = 0;
+		ReadWindowIdentity(hwnd,
+			wndClass, _countof(wndClass),
+			processPath, _countof(processPath),
+			windowTitle, _countof(windowTitle),
+			&processId);
+		SavedWindowData* pData = InstanceData::g_Instance.FindWindowSlot(hwnd, processId, wndClass);
+		if (pData->SetData(hwnd, configHash))
 		{
-			TCHAR wndClass[40];
-			TCHAR processPath[MAX_PATH];
-			TCHAR windowTitle[256];
-			DWORD processId = 0;
-			ReadWindowIdentity(hwnd,
-				wndClass, _countof(wndClass),
-				processPath, _countof(processPath),
-				windowTitle, _countof(windowTitle),
-				&processId);
-			SavedWindowData* pData = InstanceData::g_Instance.FindWindowSlot(hwnd, processId, wndClass);
-			if (pData->SetData(hwnd, configHash))
-			{
-				int* pCount = reinterpret_cast<int*>(lParam);
-				if (pCount) (*pCount)++;
-			}
+			int* pCount = reinterpret_cast<int*>(lParam);
+			if (pCount) (*pCount)++;
 		}
 	}
 	return TRUE;
@@ -613,6 +786,31 @@ void ProcessDesktopWindows()
 	GetSystemTimeAsFileTime(&InstanceData::g_Instance._LastCaptureUtc);
 	UpdateSnapshotForCurrentConfig(currentHash, (DWORD)savedCount);
 	UpdateStatusPanel();
+}
+
+void ClearWindowHistoryTracking()
+{
+	auto& inst = InstanceData::g_Instance;
+	inst._WindowHistory.clear();
+	inst._HistoryLog.clear();
+	inst._HistoryWindowKeys.clear();
+	inst._HistorySelectedHwnd = 0;
+	inst._HistoryNextSequence = 0;
+	RefreshWindowHistoryInspector();
+}
+
+void PrimeWindowHistoryTracking(LPCTSTR reason)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled) {
+		return;
+	}
+
+	for (const auto& wd : inst._WindowData) {
+		if (wd.m_hwnd != NULL && wd.m_nUnusedCount <= 2 && IsWindow(wd.m_hwnd)) {
+			RecordWindowHistorySnapshot(wd.m_hwnd, _T("initial"), reason, TRUE);
+		}
+	}
 }
 
 VOID CALLBACK SaveTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)

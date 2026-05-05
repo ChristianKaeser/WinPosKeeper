@@ -6,13 +6,48 @@
 #include "Persistence.h"
 #include "WindowTracking.h"
 
+#include <commdlg.h>
+
 BOOL ShouldLogEvents()
 {
-	return InstanceData::g_Instance.LoggingEnabled;
+	auto& inst = InstanceData::g_Instance;
+	return inst.LoggingEnabled || inst._HistoryTrackingEnabled;
+}
+
+static ULONGLONG FileTimeToUInt64ForSort(const FILETIME& value)
+{
+	ULARGE_INTEGER result = {};
+	result.LowPart = value.dwLowDateTime;
+	result.HighPart = value.dwHighDateTime;
+	return result.QuadPart;
+}
+
+static void AppendHistoryLogEvent(LPCTSTR type, LPCTSTR detail, const FILETIME& recordedUtc)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled) {
+		return;
+	}
+
+	HistoryLogEntry entry;
+	entry.recordedUtc = recordedUtc;
+	entry.sequence = ++inst._HistoryNextSequence;
+	entry.type = type != NULL ? type : _T("");
+	entry.detail = detail != NULL ? detail : _T("");
+	inst._HistoryLog.push_back(entry);
+	if (inst._HistoryLog.size() > MAX_HISTORY_LOG_EVENTS) {
+		inst._HistoryLog.erase(inst._HistoryLog.begin(),
+			inst._HistoryLog.begin() + (inst._HistoryLog.size() - MAX_HISTORY_LOG_EVENTS));
+	}
+	RefreshWindowHistoryInspector();
 }
 
 void LogEvent(LPCTSTR type, LPCTSTR detail)
 {
+	FILETIME recordedUtc = {};
+	GetSystemTimeAsFileTime(&recordedUtc);
+	AppendHistoryLogEvent(type, detail, recordedUtc);
+
 	if (!InstanceData::g_Instance.LoggingEnabled)
 		return;
 
@@ -582,6 +617,385 @@ void RefreshPlacementInspector()
 	UpdatePlacementInspectorDetails(inst._InspectorSelectedConfigHash);
 }
 
+struct HistoryTimelineDisplayEntry {
+	FILETIME recordedUtc;
+	ULONGLONG sequence;
+	BOOL isWindowEvent;
+	RECT rect;
+	BOOL hasPlacement;
+	int showCmd;
+	std::basic_string<TCHAR> source;
+	std::basic_string<TCHAR> detail;
+	std::basic_string<TCHAR> windowTitle;
+};
+
+static void FormatFileTimePreciseLocal(const FILETIME* fileTimeUtc, TCHAR* buffer, size_t cchBuffer)
+{
+	if (fileTimeUtc == NULL || (fileTimeUtc->dwLowDateTime == 0 && fileTimeUtc->dwHighDateTime == 0)) {
+		StringCchCopy(buffer, cchBuffer, _T("never"));
+		return;
+	}
+
+	FILETIME localTime = {};
+	SYSTEMTIME st = {};
+	if (!FileTimeToLocalFileTime(fileTimeUtc, &localTime) || !FileTimeToSystemTime(&localTime, &st)) {
+		StringCchCopy(buffer, cchBuffer, _T("unknown"));
+		return;
+	}
+
+	SYSTEMTIME now = {};
+	GetLocalTime(&now);
+	if (st.wYear == now.wYear && st.wMonth == now.wMonth && st.wDay == now.wDay) {
+		StringCchPrintf(buffer, cchBuffer, _T("%02d:%02d:%02d.%03d"),
+			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+		return;
+	}
+
+	StringCchPrintf(buffer, cchBuffer, _T("%04d-%02d-%02d %02d:%02d:%02d.%03d"),
+		st.wYear, st.wMonth, st.wDay,
+		st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+}
+
+static void FormatHistoryRect(const RECT* rect, TCHAR* buffer, size_t cchBuffer)
+{
+	if (rect == NULL) {
+		StringCchCopy(buffer, cchBuffer, _T("-"));
+		return;
+	}
+
+	StringCchPrintf(buffer, cchBuffer, _T("(%6d,%6d %5dx%-5d)"),
+		rect->left,
+		rect->top,
+		rect->right - rect->left,
+		rect->bottom - rect->top);
+}
+
+static BOOL IsHistoryViewVisible()
+{
+	auto& inst = InstanceData::g_Instance;
+	return inst._MainWnd != NULL && IsWindowVisible(inst._MainWnd) &&
+		inst._hHistoryWindowList != NULL && inst._hHistorySummary != NULL && inst._hHistoryTimelineList != NULL &&
+		IsWindowVisible(inst._hHistoryWindowList) && IsWindowVisible(inst._hHistorySummary) &&
+		IsWindowVisible(inst._hHistoryTimelineList);
+}
+
+static void CaptureHistorySelection()
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hHistoryWindowList == NULL || inst._HistoryWindowKeys.empty()) {
+		return;
+	}
+
+	int selection = (int)SendMessage(inst._hHistoryWindowList, LB_GETCURSEL, 0, 0);
+	if (selection != LB_ERR && selection >= 0 && selection < (int)inst._HistoryWindowKeys.size()) {
+		inst._HistorySelectedHwnd = inst._HistoryWindowKeys[(size_t)selection];
+	}
+}
+
+static void CollectWindowHistoryKeys(std::vector<UINT_PTR>& hwndValues)
+{
+	auto& inst = InstanceData::g_Instance;
+	hwndValues.clear();
+	for (const auto& pair : inst._WindowHistory) {
+		if (!pair.second.entries.empty()) {
+			hwndValues.push_back(pair.first);
+		}
+	}
+
+	std::sort(hwndValues.begin(), hwndValues.end(), [&](UINT_PTR left, UINT_PTR right) {
+		const WindowHistoryData& leftHistory = inst._WindowHistory[left];
+		const WindowHistoryData& rightHistory = inst._WindowHistory[right];
+		ULONGLONG leftTime = FileTimeToUInt64ForSort(leftHistory.lastRecordedUtc);
+		ULONGLONG rightTime = FileTimeToUInt64ForSort(rightHistory.lastRecordedUtc);
+		if (leftTime != rightTime) {
+			return leftTime > rightTime;
+		}
+		return left < right;
+	});
+}
+
+static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
+	const WindowHistoryData*& historyData,
+	std::vector<HistoryTimelineDisplayEntry>& rows)
+{
+	auto& inst = InstanceData::g_Instance;
+	rows.clear();
+	historyData = NULL;
+
+	auto historyIt = inst._WindowHistory.find(selectedHwnd);
+	if (historyIt == inst._WindowHistory.end()) {
+		return;
+	}
+
+	historyData = &historyIt->second;
+	rows.reserve(historyIt->second.entries.size() + inst._HistoryLog.size());
+	for (const auto& entry : historyIt->second.entries) {
+		HistoryTimelineDisplayEntry row = {};
+		row.recordedUtc = entry.recordedUtc;
+		row.sequence = entry.sequence;
+		row.isWindowEvent = TRUE;
+		row.rect = entry.rect;
+		row.hasPlacement = entry.hasPlacement;
+		row.showCmd = entry.showCmd;
+		row.source = entry.source;
+		row.detail = entry.detail;
+		row.windowTitle = entry.windowTitle;
+		rows.push_back(row);
+	}
+
+	for (const auto& entry : inst._HistoryLog) {
+		HistoryTimelineDisplayEntry row = {};
+		row.recordedUtc = entry.recordedUtc;
+		row.sequence = entry.sequence;
+		row.isWindowEvent = FALSE;
+		row.hasPlacement = FALSE;
+		row.showCmd = SW_HIDE;
+		row.source = _T("app:");
+		row.source.append(entry.type);
+		row.detail = entry.detail;
+		rows.push_back(row);
+	}
+
+	std::sort(rows.begin(), rows.end(), [](const HistoryTimelineDisplayEntry& left,
+		const HistoryTimelineDisplayEntry& right) {
+		ULONGLONG leftTime = FileTimeToUInt64ForSort(left.recordedUtc);
+		ULONGLONG rightTime = FileTimeToUInt64ForSort(right.recordedUtc);
+		if (leftTime != rightTime) {
+			return leftTime < rightTime;
+		}
+		return left.sequence < right.sequence;
+	});
+}
+
+static void UpdateWindowHistoryDetails(UINT_PTR selectedHwnd)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hHistorySummary == NULL || inst._hHistoryTimelineList == NULL) {
+		return;
+	}
+
+	SendMessage(inst._hHistoryTimelineList, WM_SETREDRAW, FALSE, 0);
+	SendMessage(inst._hHistoryTimelineList, LB_RESETCONTENT, 0, 0);
+
+	if (!inst._HistoryTrackingEnabled) {
+		SetWindowText(inst._hHistorySummary,
+			_T("Enable in-memory window history tracking from the Settings tab to start recording window geometry changes and merged app events."));
+		EnableWindow(inst._hHistoryExportButton, FALSE);
+		SendMessage(inst._hHistoryTimelineList, WM_SETREDRAW, TRUE, 0);
+		InvalidateRect(inst._hHistoryTimelineList, NULL, TRUE);
+		return;
+	}
+
+	const WindowHistoryData* historyData = NULL;
+	std::vector<HistoryTimelineDisplayEntry> rows;
+	BuildWindowHistoryTimeline(selectedHwnd, historyData, rows);
+	if (selectedHwnd == 0 || historyData == NULL) {
+		SetWindowText(inst._hHistorySummary, _T("No in-memory history entries have been captured yet."));
+		EnableWindow(inst._hHistoryExportButton, FALSE);
+		SendMessage(inst._hHistoryTimelineList, WM_SETREDRAW, TRUE, 0);
+		InvalidateRect(inst._hHistoryTimelineList, NULL, TRUE);
+		return;
+	}
+
+	TCHAR lastSeen[64];
+	FormatFileTimePreciseLocal(&historyData->lastRecordedUtc, lastSeen, _countof(lastSeen));
+	TCHAR summary[2048];
+	StringCchPrintf(summary, _countof(summary),
+		_T("HWND:               0x%08IX\r\n")
+		_T("PID:                %lu\r\n")
+		_T("Class:              %s\r\n")
+		_T("Process:            %s\r\n")
+		_T("Latest title:       %s\r\n")
+		_T("Window entries:     %u / %d\r\n")
+		_T("Merged app events:  %u\r\n")
+		_T("Last recorded:      %s"),
+		historyData->hwndValue,
+		historyData->processId,
+		historyData->windowClass.empty() ? _T("<unknown>") : historyData->windowClass.c_str(),
+		historyData->processPath.empty() ? _T("<unknown>") : historyData->processPath.c_str(),
+		historyData->latestTitle.empty() ? _T("<untitled>") : historyData->latestTitle.c_str(),
+		(UINT)historyData->entries.size(),
+		MAX_HISTORY_ENTRIES_PER_WINDOW,
+		(UINT)inst._HistoryLog.size(),
+		lastSeen);
+	SetWindowText(inst._hHistorySummary, summary);
+	EnableWindow(inst._hHistoryExportButton, TRUE);
+
+	SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0,
+		(LPARAM)_T("Time                 Source           Rect                         Show              Detail"));
+	SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0,
+		(LPARAM)_T("-------------------- ---------------- --------------------------- ----------------- ----------------------------------------------"));
+	for (const auto& row : rows) {
+		TCHAR timeText[64];
+		TCHAR rectText[64];
+		TCHAR detailText[1024];
+		TCHAR line[1600];
+		FormatFileTimePreciseLocal(&row.recordedUtc, timeText, _countof(timeText));
+		FormatHistoryRect(row.hasPlacement ? &row.rect : NULL, rectText, _countof(rectText));
+		if (row.isWindowEvent && !row.windowTitle.empty()) {
+			StringCchPrintf(detailText, _countof(detailText), _T("%s | \"%s\""),
+				row.detail.c_str(), row.windowTitle.c_str());
+		}
+		else {
+			StringCchCopy(detailText, _countof(detailText), row.detail.c_str());
+		}
+		StringCchPrintf(line, _countof(line), _T("%-20s %-16s %-27s %-17s %s"),
+			timeText,
+			row.source.c_str(),
+			row.hasPlacement ? rectText : _T("-"),
+			row.hasPlacement ? TranslateShowCommand(row.showCmd) : _T("-"),
+			detailText);
+		SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0, (LPARAM)line);
+	}
+
+	SendMessage(inst._hHistoryTimelineList, WM_SETREDRAW, TRUE, 0);
+	InvalidateRect(inst._hHistoryTimelineList, NULL, TRUE);
+}
+
+void RefreshWindowHistoryInspector()
+{
+	auto& inst = InstanceData::g_Instance;
+	if (inst._hHistoryWindowList == NULL || inst._hHistorySummary == NULL || inst._hHistoryTimelineList == NULL) {
+		return;
+	}
+	if (!IsHistoryViewVisible()) {
+		return;
+	}
+
+	CaptureHistorySelection();
+	CollectWindowHistoryKeys(inst._HistoryWindowKeys);
+	SendMessage(inst._hHistoryWindowList, WM_SETREDRAW, FALSE, 0);
+	SendMessage(inst._hHistoryWindowList, LB_RESETCONTENT, 0, 0);
+	for (UINT_PTR hwndValue : inst._HistoryWindowKeys) {
+		const WindowHistoryData& historyData = inst._WindowHistory[hwndValue];
+		TCHAR lastSeen[64];
+		TCHAR line[1024];
+		FormatFileTimePreciseLocal(&historyData.lastRecordedUtc, lastSeen, _countof(lastSeen));
+		StringCchPrintf(line, _countof(line),
+			_T("0x%08IX pid=%6lu entries=%-4u last=%-23s %s"),
+			historyData.hwndValue,
+			historyData.processId,
+			(UINT)historyData.entries.size(),
+			lastSeen,
+			historyData.latestTitle.empty() ? _T("<untitled>") : historyData.latestTitle.c_str());
+		SendMessage(inst._hHistoryWindowList, LB_ADDSTRING, 0, (LPARAM)line);
+	}
+
+	int selectedIndex = LB_ERR;
+	if (!inst._HistoryWindowKeys.empty()) {
+		UINT_PTR preferredHwnd = inst._HistorySelectedHwnd != 0 ? inst._HistorySelectedHwnd : inst._HistoryWindowKeys.front();
+		for (size_t index = 0; index < inst._HistoryWindowKeys.size(); ++index) {
+			if (inst._HistoryWindowKeys[index] == preferredHwnd) {
+				selectedIndex = (int)index;
+				break;
+			}
+		}
+		if (selectedIndex == LB_ERR) {
+			selectedIndex = 0;
+		}
+		inst._HistorySelectedHwnd = inst._HistoryWindowKeys[(size_t)selectedIndex];
+		SendMessage(inst._hHistoryWindowList, LB_SETCURSEL, selectedIndex, 0);
+	}
+	else {
+		inst._HistorySelectedHwnd = 0;
+	}
+
+	SendMessage(inst._hHistoryWindowList, WM_SETREDRAW, TRUE, 0);
+	InvalidateRect(inst._hHistoryWindowList, NULL, TRUE);
+	UpdateWindowHistoryDetails(inst._HistorySelectedHwnd);
+}
+
+static void SanitizeFileNameComponent(std::basic_string<TCHAR>& text)
+{
+	for (auto& ch : text) {
+		if (ch < 32 || ch == '\\' || ch == '/' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') {
+			ch = '_';
+		}
+	}
+	while (!text.empty() && (text.back() == ' ' || text.back() == '.')) {
+		text.pop_back();
+	}
+	if (text.empty()) {
+		text = _T("window-history");
+	}
+}
+
+void ExportSelectedWindowHistory(HWND hWndOwner)
+{
+	auto& inst = InstanceData::g_Instance;
+	const WindowHistoryData* historyData = NULL;
+	std::vector<HistoryTimelineDisplayEntry> rows;
+	BuildWindowHistoryTimeline(inst._HistorySelectedHwnd, historyData, rows);
+	if (historyData == NULL) {
+		MessageBox(hWndOwner, _T("Select a tracked window in the History tab first."),
+			_T("WinPosKeeper History Export"), MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+
+	std::basic_string<TCHAR> baseName = historyData->latestTitle.empty() ? _T("window-history") : historyData->latestTitle;
+	SanitizeFileNameComponent(baseName);
+	if (baseName.size() > 48) {
+		baseName.resize(48);
+	}
+	TCHAR defaultName[MAX_PATH];
+	StringCchPrintf(defaultName, _countof(defaultName), _T("%s-0x%08IX.tsv"), baseName.c_str(), historyData->hwndValue);
+
+	TCHAR filter[] = _T("Tab-separated values (*.tsv)\0*.tsv\0All Files (*.*)\0*.*\0\0");
+	TCHAR path[MAX_PATH];
+	StringCchCopy(path, _countof(path), defaultName);
+	OPENFILENAME ofn = {};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = hWndOwner;
+	ofn.lpstrFilter = filter;
+	ofn.lpstrFile = path;
+	ofn.nMaxFile = _countof(path);
+	ofn.lpstrDefExt = _T("tsv");
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+	if (!GetSaveFileName(&ofn)) {
+		return;
+	}
+
+	std::basic_string<TCHAR> text;
+	text.append(_T("time\tkind\tsource\thwnd\tpid\tclass\tprocess\ttitle\tleft\ttop\twidth\theight\tshow\tdetail\r\n"));
+	for (const auto& row : rows) {
+		TCHAR timeText[64];
+		TCHAR showText[32];
+		TCHAR line[2048];
+		FormatFileTimePreciseLocal(&row.recordedUtc, timeText, _countof(timeText));
+		StringCchCopy(showText, _countof(showText), row.hasPlacement ? TranslateShowCommand(row.showCmd) : _T(""));
+		StringCchPrintf(line, _countof(line),
+			_T("%s\t%s\t%s\t0x%08IX\t%lu\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\r\n"),
+			timeText,
+			row.isWindowEvent ? _T("window") : _T("app-log"),
+			row.source.c_str(),
+			historyData->hwndValue,
+			historyData->processId,
+			historyData->windowClass.c_str(),
+			historyData->processPath.c_str(),
+			row.isWindowEvent ? row.windowTitle.c_str() : _T(""),
+			row.hasPlacement ? row.rect.left : 0,
+			row.hasPlacement ? row.rect.top : 0,
+			row.hasPlacement ? row.rect.right - row.rect.left : 0,
+			row.hasPlacement ? row.rect.bottom - row.rect.top : 0,
+			showText,
+			row.detail.c_str());
+		text.append(line);
+	}
+
+	HANDLE hFile = CreateFile(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		LogWin32Error(_T("WARNING"), _T("CreateFile for history export"), GetLastError());
+		return;
+	}
+
+	DWORD written = 0;
+	WORD bom = 0xFEFF;
+	WriteFile(hFile, &bom, sizeof(bom), &written, NULL);
+	WriteFile(hFile, text.c_str(), (DWORD)(text.size() * sizeof(TCHAR)), &written, NULL);
+	CloseHandle(hFile);
+	LOG_EVENTF(_T("INFO"), _T("Exported history for HWND 0x%08IX to %s"), historyData->hwndValue, path);
+}
+
 void UpdateStatusPanel()
 {
 	HWND hStatus = InstanceData::g_Instance._hStatus;
@@ -625,7 +1039,7 @@ void UpdateStatusPanel()
 	StringCchPrintf(text, _countof(text),
 		_T("Config #%d: 0x%016I64X  |  Monitors: %s\r\n")
 		_T("Saved layouts: %d  |  Window records: %d  |  Placements for current layout: %d  |  Placements total: %d  |  Open tracked windows: %d\r\n")
-		_T("Last full snapshot: %s  |  Last disk sync: %s  |  Data file: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Retry: %ds x %d  |  Autostart: %s  |  Logging: %s"),
+		_T("Last full snapshot: %s  |  Last disk sync: %s  |  Data file: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Retry: %ds x %d  |  Window history: %s  |  Autostart: %s  |  Logging: %s"),
 		configId, inst._ConfigHash,
 		monitorSummary,
 		(int)configs.size(), windowRecords, currentConfigPlacements, totalPlacements, trackedWindows,
@@ -633,6 +1047,7 @@ void UpdateStatusPanel()
 		fileSize / 1024, inst.PersistPositions ? _T("ON") : _T("OFF"),
 		inst.RestoreOnDisconnect ? _T("ON") : _T("OFF"),
 		inst._RestoreRetryDelaySeconds, inst._RestoreRetryLimit,
+		inst._HistoryTrackingEnabled ? _T("ON") : _T("OFF"),
 		IsAutostartEnabled() ? _T("ON") : _T("OFF"),
 		inst.LoggingEnabled ? _T("ON") : _T("OFF"));
 

@@ -20,6 +20,8 @@
 #define DEFAULT_RESTORE_RETRY_LIMIT 4
 #define MIN_RESTORE_RETRY_LIMIT 0
 #define MAX_RESTORE_RETRY_LIMIT 10
+#define MAX_HISTORY_ENTRIES_PER_WINDOW 1000
+#define MAX_HISTORY_LOG_EVENTS 4000
 #define PLACEMENT_TOLERANCE 20
 
 extern HINSTANCE hInst;
@@ -33,6 +35,43 @@ struct ConfigSnapshotInfo {
 	std::vector<MonitorInfo> monitorLayout;
 
 	ConfigSnapshotInfo();
+};
+
+struct WindowHistoryEntry {
+	FILETIME recordedUtc;
+	RECT rect;
+	int showCmd;
+	BOOL hasPlacement;
+	ULONGLONG sequence;
+	std::basic_string<TCHAR> source;
+	std::basic_string<TCHAR> detail;
+	std::basic_string<TCHAR> windowTitle;
+
+	WindowHistoryEntry();
+};
+
+struct HistoryLogEntry {
+	FILETIME recordedUtc;
+	ULONGLONG sequence;
+	std::basic_string<TCHAR> type;
+	std::basic_string<TCHAR> detail;
+
+	HistoryLogEntry();
+};
+
+struct WindowHistoryData {
+	UINT_PTR hwndValue;
+	DWORD processId;
+	FILETIME lastRecordedUtc;
+	WINDOWPLACEMENT lastPlacement;
+	BOOL hasLastPlacement;
+	ULONGLONG pendingSelfActionUntilTick;
+	std::basic_string<TCHAR> windowClass;
+	std::basic_string<TCHAR> processPath;
+	std::basic_string<TCHAR> latestTitle;
+	std::vector<WindowHistoryEntry> entries;
+
+	WindowHistoryData();
 };
 
 class SavedWindowData {
@@ -97,21 +136,32 @@ public:
 	HWND _hSettingsAutostartCheck;
 	HWND _hSettingsPersistCheck;
 	HWND _hSettingsLoggingCheck;
+	HWND _hSettingsHistoryCheck;
 	HWND _hSettingsDelayLabel;
 	HWND _hSettingsDelayEdit;
 	HWND _hSettingsRetryLabel;
 	HWND _hSettingsRetryEdit;
 	HWND _hSettingsApplyButton;
+	HWND _hHistoryWindowList;
+	HWND _hHistorySummary;
+	HWND _hHistoryTimelineList;
+	HWND _hHistoryExportButton;
 	HFONT _hLogFont;
 	BOOL InChangingState;
 	BOOL RestoreOnDisconnect;
 	BOOL PersistPositions;
 	BOOL LoggingEnabled;
+	BOOL _HistoryTrackingEnabled;
 	BOOL AlreadyRunning;
 	int _RestoreRetryDelaySeconds;
 	int _RestoreRetryLimit;
 	int _RestoreRetryCount;
 	BOOL _AwaitingRestoreRetry;
+	std::map<UINT_PTR, WindowHistoryData> _WindowHistory;
+	std::vector<HistoryLogEntry> _HistoryLog;
+	std::vector<UINT_PTR> _HistoryWindowKeys;
+	UINT_PTR _HistorySelectedHwnd;
+	ULONGLONG _HistoryNextSequence;
 	HANDLE _MutexSingleInstance;
 	UINT64 _InspectorSelectedConfigHash;
 	std::vector<UINT64> _InspectorConfigHashes;

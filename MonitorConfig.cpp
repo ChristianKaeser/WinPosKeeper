@@ -201,9 +201,12 @@ VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK hWinEventHook, DWORD dwEvent, H
 	UNREFERENCED_PARAMETER(idChild);
 	UNREFERENCED_PARAMETER(dwEventThread);
 	UNREFERENCED_PARAMETER(dwmsEventTime);
-	if (InstanceData::g_Instance.InChangingState) return;
 	if (hwnd != NULL && dwEvent == EVENT_OBJECT_LOCATIONCHANGE)
 	{
+		if (InstanceData::g_Instance._HistoryTrackingEnabled) {
+			CaptureWindowHistoryEvent(hwnd, NULL, _T("location change"), FALSE);
+		}
+		if (InstanceData::g_Instance.InChangingState) return;
 		SetTimer(InstanceData::g_Instance._MainWnd, CAPTURE_TIMER_ID, 1000, SaveTimerCallback);
 	}
 }

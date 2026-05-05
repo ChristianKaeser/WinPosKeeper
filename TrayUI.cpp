@@ -18,6 +18,7 @@ enum MainWindowTabPage {
 	MainWindowTabLayouts = 1,
 	MainWindowTabReadme = 2,
 	MainWindowTabSettings = 3,
+	MainWindowTabHistory = 4,
 };
 
 static int GetSelectedMainTab()
@@ -61,7 +62,8 @@ static void SaveCurrentSettings()
 		inst.PersistPositions,
 		inst.LoggingEnabled,
 		inst._RestoreRetryDelaySeconds,
-		inst._RestoreRetryLimit);
+		inst._RestoreRetryLimit,
+		inst._HistoryTrackingEnabled);
 }
 
 static void SetCheckboxValue(HWND hWnd, BOOL checked)
@@ -92,6 +94,7 @@ static void SyncSettingsControlsFromState()
 	SetCheckboxValue(inst._hSettingsAutostartCheck, IsAutostartEnabled());
 	SetCheckboxValue(inst._hSettingsPersistCheck, inst.PersistPositions);
 	SetCheckboxValue(inst._hSettingsLoggingCheck, inst.LoggingEnabled);
+	SetCheckboxValue(inst._hSettingsHistoryCheck, inst._HistoryTrackingEnabled);
 	SetIntegerControlValue(inst._hSettingsDelayEdit, inst._RestoreRetryDelaySeconds);
 	SetIntegerControlValue(inst._hSettingsRetryEdit, inst._RestoreRetryLimit);
 }
@@ -141,15 +144,20 @@ static void ApplySettingsFromControls(HWND hWnd)
 	BOOL newAutostart = GetCheckboxValue(inst._hSettingsAutostartCheck);
 	BOOL newPersistPositions = GetCheckboxValue(inst._hSettingsPersistCheck);
 	BOOL newLoggingEnabled = GetCheckboxValue(inst._hSettingsLoggingCheck);
+	BOOL newHistoryTrackingEnabled = GetCheckboxValue(inst._hSettingsHistoryCheck);
 	BOOL oldAutostart = IsAutostartEnabled();
 	BOOL oldLoggingEnabled = inst.LoggingEnabled;
+	BOOL historyWasEnabled = inst._HistoryTrackingEnabled;
 	BOOL persistenceWasDisabled = !inst.PersistPositions && newPersistPositions;
+	BOOL historyJustEnabled = !historyWasEnabled && newHistoryTrackingEnabled;
+	BOOL historyJustDisabled = historyWasEnabled && !newHistoryTrackingEnabled;
 
 	BOOL changed =
 		inst.RestoreOnDisconnect != newRestoreOnDisconnect ||
 		oldAutostart != newAutostart ||
 		inst.PersistPositions != newPersistPositions ||
 		inst.LoggingEnabled != newLoggingEnabled ||
+		inst._HistoryTrackingEnabled != newHistoryTrackingEnabled ||
 		inst._RestoreRetryDelaySeconds != delaySeconds ||
 		inst._RestoreRetryLimit != retryLimit;
 	if (!changed) {
@@ -159,11 +167,12 @@ static void ApplySettingsFromControls(HWND hWnd)
 
 	TCHAR summary[512];
 	StringCchPrintf(summary, _countof(summary),
-		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, retry delay=%d s, retry limit=%d"),
+		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, window history=%s, retry delay=%d s, retry limit=%d"),
 		newRestoreOnDisconnect ? _T("ON") : _T("OFF"),
 		newAutostart ? _T("ON") : _T("OFF"),
 		newPersistPositions ? _T("ON") : _T("OFF"),
 		newLoggingEnabled ? _T("ON") : _T("OFF"),
+		newHistoryTrackingEnabled ? _T("ON") : _T("OFF"),
 		delaySeconds,
 		retryLimit);
 
@@ -175,10 +184,14 @@ static void ApplySettingsFromControls(HWND hWnd)
 	inst.PersistPositions = newPersistPositions;
 	inst._RestoreRetryDelaySeconds = delaySeconds;
 	inst._RestoreRetryLimit = retryLimit;
+	inst._HistoryTrackingEnabled = newHistoryTrackingEnabled;
 	if (oldAutostart != newAutostart) {
 		SetAutostart(newAutostart);
 	}
 	inst.LoggingEnabled = newLoggingEnabled;
+	if (historyJustDisabled) {
+		ClearWindowHistoryTracking();
+	}
 
 	SaveCurrentSettings();
 	UpdateMainMenuChecks(hWnd);
@@ -186,6 +199,9 @@ static void ApplySettingsFromControls(HWND hWnd)
 	SyncSettingsControlsFromState();
 	if (inst.LoggingEnabled) {
 		LogEvent(_T("INFO"), summary);
+	}
+	if (historyJustEnabled) {
+		PrimeWindowHistoryTracking(_T("tracking enabled"));
 	}
 	if (persistenceWasDisabled) {
 		inst.SaveToDisk(_T("persistence enabled from settings"));
@@ -201,6 +217,7 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	BOOL showLayouts = selectedTab == MainWindowTabLayouts ? TRUE : FALSE;
 	BOOL showReadme = selectedTab == MainWindowTabReadme ? TRUE : FALSE;
 	BOOL showSettings = selectedTab == MainWindowTabSettings ? TRUE : FALSE;
+	BOOL showHistory = selectedTab == MainWindowTabHistory ? TRUE : FALSE;
 
 	ShowChildControl(InstanceData::g_Instance._hLogList, showLog);
 	ShowChildControl(InstanceData::g_Instance._hConfigList, showLayouts);
@@ -212,11 +229,16 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	ShowChildControl(InstanceData::g_Instance._hSettingsAutostartCheck, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsPersistCheck, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsLoggingCheck, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hSettingsHistoryCheck, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsDelayLabel, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsDelayEdit, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsRetryLabel, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsRetryEdit, showSettings);
 	ShowChildControl(InstanceData::g_Instance._hSettingsApplyButton, showSettings);
+	ShowChildControl(InstanceData::g_Instance._hHistoryWindowList, showHistory);
+	ShowChildControl(InstanceData::g_Instance._hHistorySummary, showHistory);
+	ShowChildControl(InstanceData::g_Instance._hHistoryTimelineList, showHistory);
+	ShowChildControl(InstanceData::g_Instance._hHistoryExportButton, showHistory);
 
 	if (showLayouts) {
 		RefreshPlacementInspector();
@@ -226,6 +248,9 @@ static void UpdateMainTabVisibility(HWND hWnd)
 	}
 	if (showSettings) {
 		SyncSettingsControlsFromState();
+	}
+	if (showHistory) {
+		RefreshWindowHistoryInspector();
 	}
 }
 
@@ -292,6 +317,9 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 		y += rowHeight + 2;
 		MoveWindow(InstanceData::g_Instance._hSettingsLoggingCheck,
 			contentRect.left, y, contentWidth, rowHeight, TRUE);
+		y += rowHeight + 2;
+		MoveWindow(InstanceData::g_Instance._hSettingsHistoryCheck,
+			contentRect.left, y, contentWidth, rowHeight, TRUE);
 		y += rowHeight + 10;
 
 		MoveWindow(InstanceData::g_Instance._hSettingsDelayLabel,
@@ -306,6 +334,24 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 		y += rowHeight + 12;
 		MoveWindow(InstanceData::g_Instance._hSettingsApplyButton,
 			contentRect.left, y, 132, rowHeight + 6, TRUE);
+	}
+	if (InstanceData::g_Instance._hHistoryWindowList) {
+		int selectorHeight = min(96, max(60, contentHeight / 5));
+		int summaryHeight = min(118, max(84, contentHeight / 4));
+		int buttonHeight = 28;
+		int y = contentRect.top;
+
+		MoveWindow(InstanceData::g_Instance._hHistoryWindowList,
+			contentRect.left, y, contentWidth, selectorHeight, TRUE);
+		y += selectorHeight + 8;
+		MoveWindow(InstanceData::g_Instance._hHistorySummary,
+			contentRect.left, y, contentWidth, summaryHeight, TRUE);
+		y += summaryHeight + 8;
+		MoveWindow(InstanceData::g_Instance._hHistoryExportButton,
+			contentRect.left, y, 132, buttonHeight, TRUE);
+		y += buttonHeight + 8;
+		MoveWindow(InstanceData::g_Instance._hHistoryTimelineList,
+			contentRect.left, y, contentWidth, max(80, contentRect.bottom - y), TRUE);
 	}
 
 	int selectorHeight = min(88, max(56, contentHeight / 6));
@@ -476,7 +522,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		hWnd, (HMENU)IDC_README_VIEW, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsIntro = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"),
 		_T("The quick tray/menu toggles are mirrored here, together with the restore retry timing.\r\n\r\n")
-		_T("Disk persistence only stores same-session restart recovery data for still-running windows. It is not used to guess matches across a new Windows boot or session."),
+		_T("Disk persistence only stores same-session restart recovery data for still-running windows. It is not used to guess matches across a new Windows boot or session.\r\n\r\n")
+		_T("Window history tracking keeps an in-memory timeline of geometry changes per HWND and can export a merged TSV with app events for analysis."),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
 		4, STATUS_HEIGHT + 8, 690, 120,
 		hWnd, (HMENU)IDC_SETTINGS_INTRO, hInstance, NULL);
@@ -500,28 +547,49 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 208, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_LOGGING_CHECK, hInstance, NULL);
+	InstanceData::g_Instance._hSettingsHistoryCheck = CreateWindowEx(0, _T("BUTTON"),
+		_T("Keep in-memory window history and allow TSV export for bug investigation"),
+		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
+		4, STATUS_HEIGHT + 232, 690, 20,
+		hWnd, (HMENU)IDC_SETTINGS_HISTORY_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsDelayLabel = CreateWindowEx(0, _T("STATIC"),
 		_T("Restore verification delay (seconds):"),
 		WS_CHILD,
-		4, STATUS_HEIGHT + 236, 240, 20,
+		4, STATUS_HEIGHT + 260, 240, 20,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_LABEL, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsDelayEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("2"),
 		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
-		248, STATUS_HEIGHT + 232, 64, 24,
+		248, STATUS_HEIGHT + 256, 64, 24,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_EDIT, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsRetryLabel = CreateWindowEx(0, _T("STATIC"),
 		_T("Additional restore retries after mismatch:"),
 		WS_CHILD,
-		4, STATUS_HEIGHT + 264, 240, 20,
+		4, STATUS_HEIGHT + 288, 240, 20,
 		hWnd, (HMENU)IDC_SETTINGS_RETRY_LABEL, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsRetryEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("4"),
 		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
-		248, STATUS_HEIGHT + 260, 64, 24,
+		248, STATUS_HEIGHT + 284, 64, 24,
 		hWnd, (HMENU)IDC_SETTINGS_RETRY_EDIT, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsApplyButton = CreateWindowEx(0, _T("BUTTON"), _T("Apply Settings"),
 		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
-		4, STATUS_HEIGHT + 292, 132, 28,
+		4, STATUS_HEIGHT + 316, 132, 28,
 		hWnd, (HMENU)IDC_SETTINGS_APPLY, hInstance, NULL);
+	InstanceData::g_Instance._hHistoryWindowList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
+		4, STATUS_HEIGHT + 8, 690, 96,
+		hWnd, (HMENU)IDC_HISTORY_WINDOW_LIST, hInstance, NULL);
+	InstanceData::g_Instance._hHistorySummary = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
+		4, STATUS_HEIGHT + 112, 690, 110,
+		hWnd, (HMENU)IDC_HISTORY_SUMMARY, hInstance, NULL);
+	InstanceData::g_Instance._hHistoryExportButton = CreateWindowEx(0, _T("BUTTON"), _T("Export TSV..."),
+		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+		4, STATUS_HEIGHT + 230, 132, 28,
+		hWnd, (HMENU)IDC_HISTORY_EXPORT, hInstance, NULL);
+	InstanceData::g_Instance._hHistoryTimelineList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
+		4, STATUS_HEIGHT + 266, 690, 200,
+		hWnd, (HMENU)IDC_HISTORY_TIMELINE_LIST, hInstance, NULL);
 
 	if (InstanceData::g_Instance._hMainTab == NULL || InstanceData::g_Instance._hStatus == NULL ||
 		InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL ||
@@ -529,9 +597,12 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		InstanceData::g_Instance._hPlacementList == NULL || InstanceData::g_Instance._hReadmeView == NULL ||
 		InstanceData::g_Instance._hSettingsIntro == NULL || InstanceData::g_Instance._hSettingsRestoreCheck == NULL ||
 		InstanceData::g_Instance._hSettingsAutostartCheck == NULL || InstanceData::g_Instance._hSettingsPersistCheck == NULL ||
-		InstanceData::g_Instance._hSettingsLoggingCheck == NULL || InstanceData::g_Instance._hSettingsDelayLabel == NULL ||
+		InstanceData::g_Instance._hSettingsLoggingCheck == NULL || InstanceData::g_Instance._hSettingsHistoryCheck == NULL ||
+		InstanceData::g_Instance._hSettingsDelayLabel == NULL ||
 		InstanceData::g_Instance._hSettingsDelayEdit == NULL || InstanceData::g_Instance._hSettingsRetryLabel == NULL ||
-		InstanceData::g_Instance._hSettingsRetryEdit == NULL || InstanceData::g_Instance._hSettingsApplyButton == NULL) {
+		InstanceData::g_Instance._hSettingsRetryEdit == NULL || InstanceData::g_Instance._hSettingsApplyButton == NULL ||
+		InstanceData::g_Instance._hHistoryWindowList == NULL || InstanceData::g_Instance._hHistorySummary == NULL ||
+		InstanceData::g_Instance._hHistoryExportButton == NULL || InstanceData::g_Instance._hHistoryTimelineList == NULL) {
 		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
 		return FALSE;
 	}
@@ -546,6 +617,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabReadme, &tie);
 	tie.pszText = const_cast<LPTSTR>(_T("Settings"));
 	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabSettings, &tie);
+	tie.pszText = const_cast<LPTSTR>(_T("History"));
+	TabCtrl_InsertItem(InstanceData::g_Instance._hMainTab, MainWindowTabHistory, &tie);
 	TabCtrl_SetCurSel(InstanceData::g_Instance._hMainTab, MainWindowTabLog);
 	InstanceData::g_Instance._InspectorSelectedConfigHash = 0;
 	SendMessage(InstanceData::g_Instance._hStatusIcon, STM_SETIMAGE, IMAGE_ICON,
@@ -576,26 +649,39 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	SendMessage(InstanceData::g_Instance._hSettingsAutostartCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsPersistCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsLoggingCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hSettingsHistoryCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsDelayLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsDelayEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsRetryLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsRetryEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hSettingsApplyButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+	SendMessage(InstanceData::g_Instance._hHistoryWindowList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hHistorySummary, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hHistoryTimelineList, WM_SETFONT,
+		(WPARAM)(InstanceData::g_Instance._hLogFont != NULL ? InstanceData::g_Instance._hLogFont : hFont), TRUE);
+	SendMessage(InstanceData::g_Instance._hHistoryExportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 	SendMessage(InstanceData::g_Instance._hLogList, LB_SETHORIZONTALEXTENT, 4096, 0);
 	SendMessage(InstanceData::g_Instance._hConfigList, LB_SETHORIZONTALEXTENT, 12288, 0);
 	SendMessage(InstanceData::g_Instance._hPlacementList, LB_SETHORIZONTALEXTENT, 8192, 0);
+	SendMessage(InstanceData::g_Instance._hHistoryWindowList, LB_SETHORIZONTALEXTENT, 12288, 0);
+	SendMessage(InstanceData::g_Instance._hHistoryTimelineList, LB_SETHORIZONTALEXTENT, 16384, 0);
+	EnableWindow(InstanceData::g_Instance._hHistoryExportButton, FALSE);
 
 	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 		InstanceData::g_Instance.PersistPositions,
 		InstanceData::g_Instance.LoggingEnabled,
 		InstanceData::g_Instance._RestoreRetryDelaySeconds,
-		InstanceData::g_Instance._RestoreRetryLimit);
+		InstanceData::g_Instance._RestoreRetryLimit,
+		InstanceData::g_Instance._HistoryTrackingEnabled);
 	SyncSettingsControlsFromState();
 	InstanceData::g_Instance.LoadFromDisk();
 
 	InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
 	InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();
 	ProcessDesktopWindows();
+	PrimeWindowHistoryTracking(_T("startup snapshot"));
 	InstanceData::g_Instance._Hook = HookDisplayChange();
 	WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
@@ -638,8 +724,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				RefreshPlacementInspector();
 				return 0;
 			}
+			if ((HWND)lParam == InstanceData::g_Instance._hHistoryWindowList && HIWORD(wParam) == LBN_SELCHANGE) {
+				RefreshWindowHistoryInspector();
+				return 0;
+			}
 			if (LOWORD(wParam) == IDC_SETTINGS_APPLY && HIWORD(wParam) == BN_CLICKED) {
 				ApplySettingsFromControls(hWnd);
+				return 0;
+			}
+			if (LOWORD(wParam) == IDC_HISTORY_EXPORT && HIWORD(wParam) == BN_CLICKED) {
+				ExportSelectedWindowHistory(hWnd);
 				return 0;
 			}
 
