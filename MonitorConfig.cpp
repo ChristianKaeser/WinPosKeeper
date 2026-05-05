@@ -85,8 +85,11 @@ UINT64 ComputeMonitorConfigHash()
 	std::vector<MonitorInfo> monitors;
 	GetCurrentMonitorLayout(monitors);
 
-	std::sort(monitors.begin(), monitors.end(), [](const MonitorInfo& a, const MonitorInfo& b) {
-		return lstrcmp(a.szDevice, b.szDevice) < 0;
+	// Let's ignore szDevice - positions/layout are what really matter
+
+	std::stable_sort(monitors.begin(), monitors.end(), [](const MonitorInfo& a, const MonitorInfo& b) {
+		return std::tie(a.rcMonitor.left, a.rcMonitor.top, a.rcMonitor.right, a.rcMonitor.bottom) <
+			std::tie(b.rcMonitor.left, b.rcMonitor.top, b.rcMonitor.right, b.rcMonitor.bottom);
 	});
 
 	UINT64 hash = 14695981039346656037ULL;
@@ -98,9 +101,9 @@ UINT64 ComputeMonitorConfigHash()
 		const BYTE* p = static_cast<const BYTE*>(data);
 		for (size_t i = 0; i < len; i++) fnvByte(p[i]);
 	};
-
+	
 	for (const auto& m : monitors) {
-		fnvData(m.szDevice, lstrlen(m.szDevice) * sizeof(TCHAR));
+		//fnvData(m.szDevice, lstrlen(m.szDevice) * sizeof(TCHAR));
 		fnvData(&m.rcMonitor, sizeof(m.rcMonitor));
 	}
 
