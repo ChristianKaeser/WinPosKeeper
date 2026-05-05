@@ -68,6 +68,8 @@ static void ReadWindowIdentity(HWND hwnd, TCHAR* wndClass, size_t cchWndClass,
 	CloseHandle(hProcess);
 }
 
+static void FormatRectTransitionForLog(const RECT* fromRect, const RECT* toRect, TCHAR* buffer, size_t cchBuffer);
+
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
 {
 	m_hwnd = hwnd;
@@ -102,6 +104,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 {
 	TCHAR szTempClass[40];
 	DWORD actualProcessId = 0;
+	BOOL haveActualPlacement = FALSE;
 	m_lastRestoreError = ERROR_SUCCESS;
 	m_retryPending = FALSE;
 	auto it = m_placements.find(configHash);
@@ -130,6 +133,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	WINDOWPLACEMENT actual = {};
 	actual.length = sizeof(WINDOWPLACEMENT);
 	if (GetWindowPlacement(m_hwnd, &actual)) {
+		haveActualPlacement = TRUE;
 		if (!WindowPlacementNeedsRestore(it->second, actual)) {
 			return FALSE;
 		}
@@ -150,14 +154,15 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 
 	WINDOWPLACEMENT place = it->second;
 	TCHAR identity[512];
+	TCHAR rectTransition[160];
 	FormatWindowIdentity(m_hwnd, m_processId, m_wndClass, m_processPath, m_windowTitle, identity, _countof(identity));
+	FormatRectTransitionForLog(haveActualPlacement ? &actual.rcNormalPosition : NULL, &place.rcNormalPosition,
+		rectTransition, _countof(rectTransition));
 	LOG_EVENTF(_T("RESTORE"),
-		_T("%s -> (%d,%d %dx%d) %s"),
-		identity,
-		place.rcNormalPosition.left, place.rcNormalPosition.top,
-		place.rcNormalPosition.right - place.rcNormalPosition.left,
-		place.rcNormalPosition.bottom - place.rcNormalPosition.top,
-		TranslateShowCommand(place.showCmd));
+		_T("%s  %-17s %s"),
+		rectTransition,
+		TranslateShowCommand(place.showCmd),
+		identity);
 
 	if (place.showCmd == SW_MAXIMIZE) {
 		place.showCmd = SW_SHOWNOACTIVATE;
@@ -453,6 +458,29 @@ LPCTSTR TranslateShowCommand(int nShowCmd)
 	default:
 		return _T("Unknown");
 	}
+}
+
+static void FormatRectForLog(const RECT* rect, TCHAR* buffer, size_t cchBuffer)
+{
+	if (rect == NULL) {
+		StringCchCopy(buffer, cchBuffer, _T("(     ?,     ?     ?x    ? )"));
+		return;
+	}
+
+	StringCchPrintf(buffer, cchBuffer, _T("(%6d,%6d %5dx%-5d)"),
+		rect->left,
+		rect->top,
+		rect->right - rect->left,
+		rect->bottom - rect->top);
+}
+
+static void FormatRectTransitionForLog(const RECT* fromRect, const RECT* toRect, TCHAR* buffer, size_t cchBuffer)
+{
+	TCHAR fromText[64];
+	TCHAR toText[64];
+	FormatRectForLog(fromRect, fromText, _countof(fromText));
+	FormatRectForLog(toRect, toText, _countof(toText));
+	StringCchPrintf(buffer, cchBuffer, _T("%s -> %s"), fromText, toText);
 }
 
 void FormatWindowIdentity(HWND hwnd, DWORD fallbackProcessId, LPCTSTR fallbackClass, LPCTSTR fallbackProcessPath,
