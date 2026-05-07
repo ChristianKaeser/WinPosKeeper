@@ -14,12 +14,14 @@
 #define DISPLAY_SETTLE_TIMER_ID 99
 #define DISPLAY_SETTLE_MS 2000
 #define VERIFY_TIMER_ID 4
+#define HISTORY_FLUSH_TIMER_ID 5
 #define DEFAULT_RESTORE_RETRY_DELAY_SECONDS 2
 #define MIN_RESTORE_RETRY_DELAY_SECONDS 1
 #define MAX_RESTORE_RETRY_DELAY_SECONDS 30
 #define DEFAULT_RESTORE_RETRY_LIMIT 4
 #define MIN_RESTORE_RETRY_LIMIT 0
 #define MAX_RESTORE_RETRY_LIMIT 10
+#define HISTORY_RATE_LIMIT_WINDOW_MS 1000
 #define MAX_HISTORY_ENTRIES_PER_WINDOW 1000
 #define MAX_HISTORY_LOG_EVENTS 4000
 #define PLACEMENT_TOLERANCE 20
@@ -65,10 +67,16 @@ struct WindowHistoryData {
 	FILETIME lastRecordedUtc;
 	WINDOWPLACEMENT lastPlacement;
 	BOOL hasLastPlacement;
+	ULONGLONG rateLimitUntilTick;
 	ULONGLONG pendingSelfActionUntilTick;
+	WINDOWPLACEMENT pendingPlacement;
+	BOOL hasPendingPlacement;
 	std::basic_string<TCHAR> windowClass;
 	std::basic_string<TCHAR> processPath;
 	std::basic_string<TCHAR> latestTitle;
+	std::basic_string<TCHAR> pendingSource;
+	std::basic_string<TCHAR> pendingDetail;
+	std::basic_string<TCHAR> pendingWindowTitle;
 	std::vector<WindowHistoryEntry> entries;
 
 	WindowHistoryData();

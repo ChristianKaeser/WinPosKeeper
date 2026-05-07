@@ -250,6 +250,7 @@ static void UpdateMainTabVisibility(HWND hWnd)
 		SyncSettingsControlsFromState();
 	}
 	if (showHistory) {
+		PurgeClosedWindowHistoryEntries();
 		RefreshWindowHistoryInspector();
 	}
 }
@@ -336,9 +337,11 @@ static void LayoutMainWindow(HWND hWnd, int cx, int cy)
 			contentRect.left, y, 132, rowHeight + 6, TRUE);
 	}
 	if (InstanceData::g_Instance._hHistoryWindowList) {
-		int selectorHeight = min(96, max(60, contentHeight / 5));
-		int summaryHeight = min(118, max(84, contentHeight / 4));
 		int buttonHeight = 28;
+		int minTimelineHeight = 96;
+		int summaryHeight = min(96, max(60, contentHeight / 6));
+		int selectorHeight = contentHeight - summaryHeight - buttonHeight - 24 - minTimelineHeight;
+		selectorHeight = min(288, max(96, selectorHeight));
 		int y = contentRect.top;
 
 		MoveWindow(InstanceData::g_Instance._hHistoryWindowList,
@@ -866,6 +869,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			else {
 				VerifyRestoredWindows();
 			}
+		}
+		else if (wParam == HISTORY_FLUSH_TIMER_ID) {
+			KillTimer(hWnd, HISTORY_FLUSH_TIMER_ID);
+			FlushPendingWindowHistoryEntries();
 		}
 		break;
 	case WM_PAINT:

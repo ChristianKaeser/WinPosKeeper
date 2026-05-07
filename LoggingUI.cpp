@@ -714,6 +714,16 @@ static void CollectWindowHistoryKeys(std::vector<UINT_PTR>& hwndValues)
 	});
 }
 
+static BOOL ShouldMergeHistoryLogEntryForWindow(const HistoryLogEntry& entry, DWORD processId)
+{
+	if (entry.type == _T("RESTORE") || entry.type == _T("DISK")) {
+		TCHAR pidToken[32];
+		StringCchPrintf(pidToken, _countof(pidToken), _T("pid=%6lu"), processId);
+		return _tcsstr(entry.detail.c_str(), pidToken) != NULL;
+	}
+	return TRUE;
+}
+
 static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
 	const WindowHistoryData*& historyData,
 	std::vector<HistoryTimelineDisplayEntry>& rows)
@@ -744,6 +754,9 @@ static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
 	}
 
 	for (const auto& entry : inst._HistoryLog) {
+		if (!ShouldMergeHistoryLogEntryForWindow(entry, historyIt->second.processId)) {
+			continue;
+		}
 		HistoryTimelineDisplayEntry row = {};
 		row.recordedUtc = entry.recordedUtc;
 		row.sequence = entry.sequence;
@@ -797,6 +810,13 @@ static void UpdateWindowHistoryDetails(UINT_PTR selectedHwnd)
 		return;
 	}
 
+	UINT mergedAppEventCount = 0;
+	for (const auto& row : rows) {
+		if (!row.isWindowEvent) {
+			mergedAppEventCount++;
+		}
+	}
+
 	TCHAR lastSeen[64];
 	FormatFileTimePreciseLocal(&historyData->lastRecordedUtc, lastSeen, _countof(lastSeen));
 	TCHAR summary[2048];
@@ -816,15 +836,15 @@ static void UpdateWindowHistoryDetails(UINT_PTR selectedHwnd)
 		historyData->latestTitle.empty() ? _T("<untitled>") : historyData->latestTitle.c_str(),
 		(UINT)historyData->entries.size(),
 		MAX_HISTORY_ENTRIES_PER_WINDOW,
-		(UINT)inst._HistoryLog.size(),
+		mergedAppEventCount,
 		lastSeen);
 	SetWindowText(inst._hHistorySummary, summary);
 	EnableWindow(inst._hHistoryExportButton, TRUE);
 
 	SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0,
-		(LPARAM)_T("Time                 Source           Rect                         Show              Detail"));
+		(LPARAM)_T("Time                    Source           Rect                         Show              Detail"));
 	SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0,
-		(LPARAM)_T("-------------------- ---------------- --------------------------- ----------------- ----------------------------------------------"));
+		(LPARAM)_T("----------------------- ---------------- --------------------------- ----------------- ----------------------------------------------"));
 	for (const auto& row : rows) {
 		TCHAR timeText[64];
 		TCHAR rectText[64];
@@ -839,7 +859,7 @@ static void UpdateWindowHistoryDetails(UINT_PTR selectedHwnd)
 		else {
 			StringCchCopy(detailText, _countof(detailText), row.detail.c_str());
 		}
-		StringCchPrintf(line, _countof(line), _T("%-20s %-16s %-27s %-17s %s"),
+		StringCchPrintf(line, _countof(line), _T("%-23s %-16s %-27s %-17s %s"),
 			timeText,
 			row.source.c_str(),
 			row.hasPlacement ? rectText : _T("-"),

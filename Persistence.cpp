@@ -3,6 +3,7 @@
 #include "AppState.h"
 
 #include "LoggingUI.h"
+#include "WindowTracking.h"
 
 #define AUTOSTART_REG_KEY _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define AUTOSTART_VALUE _T("WinPosKeeper")
@@ -502,5 +503,7 @@ VOID CALLBACK PersistTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD
 	UNREFERENCED_PARAMETER(uMsg);
 	UNREFERENCED_PARAMETER(idEvent);
 	UNREFERENCED_PARAMETER(dwTime);
+	PurgeClosedWindowHistoryEntries();
+	FlushPendingWindowHistoryEntries();
 	InstanceData::g_Instance.SaveToDisk(_T("periodic 5-minute flush"));
 }
