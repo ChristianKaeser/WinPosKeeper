@@ -102,6 +102,7 @@ WindowHistoryData::WindowHistoryData()
 	rateLimitUntilTick = 0;
 	pendingSelfActionUntilTick = 0;
 	ZeroMemory(&pendingPlacement, sizeof(pendingPlacement));
+	ZeroMemory(&pendingRecordedUtc, sizeof(pendingRecordedUtc));
 	hasPendingPlacement = FALSE;
 }
 
@@ -547,10 +548,15 @@ static WindowHistoryData& GetOrCreateWindowHistory(HWND hwnd, DWORD processId,
 }
 
 static void AppendWindowHistoryEntry(WindowHistoryData& history, const WINDOWPLACEMENT& placement,
-	LPCTSTR source, LPCTSTR detail, LPCTSTR windowTitle)
+	LPCTSTR source, LPCTSTR detail, LPCTSTR windowTitle, const FILETIME* recordedUtc = NULL)
 {
 	WindowHistoryEntry entry;
-	GetSystemTimeAsFileTime(&entry.recordedUtc);
+	if (recordedUtc != NULL) {
+		entry.recordedUtc = *recordedUtc;
+	}
+	else {
+		GetSystemTimeAsFileTime(&entry.recordedUtc);
+	}
 	entry.rect = placement.rcNormalPosition;
 	entry.showCmd = placement.showCmd;
 	entry.hasPlacement = TRUE;
@@ -568,12 +574,17 @@ static void AppendWindowHistoryEntry(WindowHistoryData& history, const WINDOWPLA
 
 static void ClearPendingWindowHistory(WindowHistoryData& history)
 {
-	history.rateLimitUntilTick = 0;
 	history.hasPendingPlacement = FALSE;
 	ZeroMemory(&history.pendingPlacement, sizeof(history.pendingPlacement));
+	ZeroMemory(&history.pendingRecordedUtc, sizeof(history.pendingRecordedUtc));
 	history.pendingSource.clear();
 	history.pendingDetail.clear();
 	history.pendingWindowTitle.clear();
+}
+
+static BOOL IsWindowHistoryRateLimited(const WindowHistoryData& history, ULONGLONG nowTick)
+{
+	return history.rateLimitUntilTick != 0 && nowTick < history.rateLimitUntilTick;
 }
 
 static BOOL HasEquivalentWindowHistoryState(const WindowHistoryData& history,
@@ -584,14 +595,16 @@ static BOOL HasEquivalentWindowHistoryState(const WindowHistoryData& history,
 		history.latestTitle == title;
 }
 
-static BOOL FlushPendingWindowHistoryEntry(WindowHistoryData& history)
+static BOOL FlushPendingWindowHistoryEntry(WindowHistoryData& history, ULONGLONG nowTick)
 {
 	if (!history.hasPendingPlacement) {
+		history.rateLimitUntilTick = 0;
 		ClearPendingWindowHistory(history);
 		return FALSE;
 	}
 
 	if (HasEquivalentWindowHistoryState(history, history.pendingPlacement, history.pendingWindowTitle.c_str())) {
+		history.rateLimitUntilTick = 0;
 		ClearPendingWindowHistory(history);
 		return FALSE;
 	}
@@ -600,8 +613,10 @@ static BOOL FlushPendingWindowHistoryEntry(WindowHistoryData& history)
 		history.pendingPlacement,
 		history.pendingSource.c_str(),
 		history.pendingDetail.c_str(),
-		history.pendingWindowTitle.c_str());
+		history.pendingWindowTitle.c_str(),
+		&history.pendingRecordedUtc);
 	ClearPendingWindowHistory(history);
+	history.rateLimitUntilTick = nowTick + HISTORY_RATE_LIMIT_WINDOW_MS;
 	return TRUE;
 }
 
@@ -669,8 +684,17 @@ static BOOL FlushPendingWindowHistoryEntriesInternal(BOOL refreshUi)
 	BOOL flushedAny = FALSE;
 	for (auto& pair : inst._WindowHistory) {
 		WindowHistoryData& history = pair.second;
-		if (history.rateLimitUntilTick != 0 && nowTick >= history.rateLimitUntilTick) {
-			flushedAny = FlushPendingWindowHistoryEntry(history) || flushedAny;
+		if (history.rateLimitUntilTick == 0) {
+			continue;
+		}
+		if (!history.hasPendingPlacement) {
+			if (nowTick >= history.rateLimitUntilTick) {
+				history.rateLimitUntilTick = 0;
+			}
+			continue;
+		}
+		if (nowTick >= history.rateLimitUntilTick) {
+			flushedAny = FlushPendingWindowHistoryEntry(history, nowTick) || flushedAny;
 		}
 	}
 
@@ -760,18 +784,26 @@ static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTS
 	LPCTSTR resolvedSource = ResolveWindowHistorySource(history, sourceOverride);
 	LPCTSTR resolvedDetail = (detail != NULL && detail[0] != '\0') ? detail : _T("location change");
 	ULONGLONG nowTick = GetTickCount64();
-	if (forceCapture || history.rateLimitUntilTick == 0) {
+	if (forceCapture) {
+		history.rateLimitUntilTick = 0;
 		ClearPendingWindowHistory(history);
 		AppendWindowHistoryEntry(history, placement, resolvedSource, resolvedDetail, windowTitle);
-		if (!forceCapture) {
-			history.rateLimitUntilTick = nowTick + HISTORY_RATE_LIMIT_WINDOW_MS;
-		}
+		ScheduleWindowHistoryFlushTimer();
+		RefreshWindowHistoryInspector();
+		return;
+	}
+
+	if (!IsWindowHistoryRateLimited(history, nowTick)) {
+		ClearPendingWindowHistory(history);
+		AppendWindowHistoryEntry(history, placement, resolvedSource, resolvedDetail, windowTitle);
+		history.rateLimitUntilTick = nowTick + HISTORY_RATE_LIMIT_WINDOW_MS;
 		ScheduleWindowHistoryFlushTimer();
 		RefreshWindowHistoryInspector();
 		return;
 	}
 
 	history.pendingPlacement = placement;
+	GetSystemTimeAsFileTime(&history.pendingRecordedUtc);
 	history.hasPendingPlacement = TRUE;
 	history.pendingSource = resolvedSource;
 	history.pendingDetail = resolvedDetail;

@@ -70,6 +70,7 @@ struct WindowHistoryData {
 	ULONGLONG rateLimitUntilTick;
 	ULONGLONG pendingSelfActionUntilTick;
 	WINDOWPLACEMENT pendingPlacement;
+	FILETIME pendingRecordedUtc;
 	BOOL hasPendingPlacement;
 	std::basic_string<TCHAR> windowClass;
 	std::basic_string<TCHAR> processPath;
