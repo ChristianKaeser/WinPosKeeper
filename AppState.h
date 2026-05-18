@@ -91,6 +91,7 @@ public:
 	int m_nUnusedCount;
 	DWORD m_lastRestoreError;
 	BOOL m_retryPending;
+	BOOL m_skipRetryPasses;
 	std::map<UINT64, WINDOWPLACEMENT> m_placements;
 	HWND m_hwnd;
 	DWORD m_processId;

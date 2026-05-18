@@ -15,6 +15,7 @@ SavedWindowData::SavedWindowData()
 	m_nUnusedCount = 1;
 	m_lastRestoreError = ERROR_SUCCESS;
 	m_retryPending = FALSE;
+	m_skipRetryPasses = FALSE;
 }
 
 static void ReadWindowIdentity(HWND hwnd, TCHAR* wndClass, size_t cchWndClass,
@@ -77,6 +78,7 @@ static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR
 static BOOL FlushPendingWindowHistoryEntriesInternal(BOOL refreshUi);
 static BOOL PurgeClosedWindowHistoryEntriesInternal(BOOL refreshUi);
 static void ScheduleWindowHistoryFlushTimer();
+static SavedWindowData* FindTrackedWindowByHwnd(HWND hwnd);
 
 WindowHistoryEntry::WindowHistoryEntry()
 {
@@ -454,6 +456,7 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 	{
 		wd.m_lastRestoreError = ERROR_SUCCESS;
 		wd.m_retryPending = FALSE;
+		wd.m_skipRetryPasses = FALSE;
 	}
 
 	for (auto& wd : _WindowData)
@@ -478,6 +481,7 @@ void CancelPendingRestores()
 	{
 		wd.m_retryPending = FALSE;
 		wd.m_lastRestoreError = ERROR_SUCCESS;
+		wd.m_skipRetryPasses = FALSE;
 	}
 }
 
@@ -796,6 +800,17 @@ static void MarkWindowHistorySelfAction(HWND hwnd)
 	history.pendingSelfActionUntilTick = GetTickCount64() + 3000;
 }
 
+static SavedWindowData* FindTrackedWindowByHwnd(HWND hwnd)
+{
+	auto& inst = InstanceData::g_Instance;
+	for (auto& wd : inst._WindowData) {
+		if (wd.m_hwnd == hwnd && wd.m_nUnusedCount <= 2) {
+			return &wd;
+		}
+	}
+	return NULL;
+}
+
 static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
 {
 	auto& inst = InstanceData::g_Instance;
@@ -887,6 +902,19 @@ void CaptureWindowHistoryEvent(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail
 void CaptureWindowHistoryEnterSizeMove(HWND hwnd, LPCTSTR sourceOverride)
 {
 	auto& inst = InstanceData::g_Instance;
+	if (inst.InChangingState) {
+		SavedWindowData* trackedWindow = FindTrackedWindowByHwnd(hwnd);
+		if (trackedWindow != NULL && !trackedWindow->m_skipRetryPasses) {
+			trackedWindow->m_skipRetryPasses = TRUE;
+			trackedWindow->m_retryPending = FALSE;
+			TCHAR identity[512];
+			FormatWindowIdentity(hwnd, trackedWindow->m_processId, trackedWindow->m_wndClass,
+				trackedWindow->m_processPath, trackedWindow->m_windowTitle,
+				identity, _countof(identity));
+			LOG_EVENTF(_T("VERIFY"), _T("Skipping remaining restore passes after WM_ENTERSIZEMOVE: %s"), identity);
+		}
+	}
+
 	if (!inst._HistoryTrackingEnabled) {
 		return;
 	}
@@ -1145,17 +1173,50 @@ void RetryPendingRestores()
 {
 	auto& inst = InstanceData::g_Instance;
 	UINT64 configHash = inst._ConfigHash;
-	int pendingCount = 0;
+	int checkedCount = 0;
+	int mismatchCount = 0;
 	int successfulCalls = 0;
 	int accessDeniedCount = 0;
+	int skippedUserMoveCount = 0;
+	BOOL hasEligibleWindows = FALSE;
 
 	for (auto& wd : inst._WindowData) {
-		if (!wd.m_retryPending) {
+		if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) {
+			continue;
+		}
+		auto it = wd.m_placements.find(configHash);
+		if (it == wd.m_placements.end()) {
+			continue;
+		}
+		if (!IsWindow(wd.m_hwnd)) {
 			continue;
 		}
 
-		pendingCount++;
+		hasEligibleWindows = TRUE;
 		wd.m_retryPending = FALSE;
+		if (wd.m_skipRetryPasses) {
+			skippedUserMoveCount++;
+			continue;
+		}
+		if (wd.m_lastRestoreError == ERROR_ACCESS_DENIED) {
+			accessDeniedCount++;
+			continue;
+		}
+
+		WINDOWPLACEMENT actual = {};
+		actual.length = sizeof(actual);
+		if (!GetWindowPlacement(wd.m_hwnd, &actual)) {
+			LogWin32Error(_T("WARNING"), _T("GetWindowPlacement while preparing retry restore"), GetLastError());
+			continue;
+		}
+
+		checkedCount++;
+		if (!WindowPlacementNeedsRestore(it->second, actual)) {
+			continue;
+		}
+
+		mismatchCount++;
+		wd.m_retryPending = TRUE;
 		if (wd.RestoreWindow(configHash)) {
 			successfulCalls++;
 		}
@@ -1165,21 +1226,35 @@ void RetryPendingRestores()
 	}
 
 	inst._AwaitingRestoreRetry = FALSE;
-	if (pendingCount == 0) {
+	if (!hasEligibleWindows) {
 		inst.InChangingState = false;
+		ProcessDesktopWindows();
 		UpdateStatusPanel();
 		return;
 	}
 
-	if (accessDeniedCount > 0) {
+	if (mismatchCount == 0) {
+		if (skippedUserMoveCount > 0 || accessDeniedCount > 0) {
+			LOG_EVENTF(_T("RESTORE"),
+				_T("Retry %d/%d checked %d window(s); no retry-eligible mismatches found. Skipping %d user-moved window(s) and ignoring %d access-denied window(s)"),
+				inst._RestoreRetryCount, inst._RestoreRetryLimit, checkedCount, skippedUserMoveCount, accessDeniedCount);
+		}
+		else {
+			LOG_EVENTF(_T("RESTORE"),
+				_T("Retry %d/%d checked %d window(s); no retry-eligible mismatches found"),
+				inst._RestoreRetryCount, inst._RestoreRetryLimit, checkedCount);
+		}
+	}
+	else if (accessDeniedCount > 0 || skippedUserMoveCount > 0) {
 		LOG_EVENTF(_T("RESTORE"),
-			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded and %d access-denied window(s) will be ignored"),
-			inst._RestoreRetryCount, inst._RestoreRetryLimit, pendingCount, successfulCalls, accessDeniedCount);
+			_T("Retry %d/%d checked %d window(s); reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded, %d user-moved window(s) skipped, %d access-denied window(s) ignored"),
+			inst._RestoreRetryCount, inst._RestoreRetryLimit, checkedCount, mismatchCount, successfulCalls,
+			skippedUserMoveCount, accessDeniedCount);
 	}
 	else {
 		LOG_EVENTF(_T("RESTORE"),
-			_T("Retry %d/%d reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded"),
-			inst._RestoreRetryCount, inst._RestoreRetryLimit, pendingCount, successfulCalls);
+			_T("Retry %d/%d checked %d window(s); reapplied %d mismatched window(s); %d SetWindowPlacement call(s) succeeded"),
+			inst._RestoreRetryCount, inst._RestoreRetryLimit, checkedCount, mismatchCount, successfulCalls);
 	}
 
 	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelaySeconds * 1000, NULL);
@@ -1192,12 +1267,18 @@ void VerifyRestoredWindows()
 	UINT64 configHash = inst._ConfigHash;
 	int mismatchCount = 0;
 	int ignoredAccessDenied = 0;
+	int skippedUserMoveCount = 0;
 	std::vector<std::basic_string<TCHAR>> mismatchDetails;
 	for (auto& wd : inst._WindowData) {
 		if (wd.m_hwnd == NULL || wd.m_nUnusedCount > 2) continue;
 		auto it = wd.m_placements.find(configHash);
 		if (it == wd.m_placements.end()) continue;
 		if (!IsWindow(wd.m_hwnd)) continue;
+		if (wd.m_skipRetryPasses) {
+			wd.m_retryPending = FALSE;
+			skippedUserMoveCount++;
+			continue;
+		}
 		if (wd.m_lastRestoreError == ERROR_ACCESS_DENIED) {
 			wd.m_retryPending = FALSE;
 			ignoredAccessDenied++;
@@ -1239,9 +1320,10 @@ void VerifyRestoredWindows()
 		}
 	}
 	if (mismatchCount == 0) {
-		if (ignoredAccessDenied > 0) {
-			LOG_EVENTF(_T("VERIFY"), _T("All retry-eligible windows reached expected positions; %d access-denied window(s) were excluded"),
-				ignoredAccessDenied);
+		if (ignoredAccessDenied > 0 || skippedUserMoveCount > 0) {
+			LOG_EVENTF(_T("VERIFY"),
+				_T("All retry-eligible windows reached expected positions; %d user-moved window(s) and %d access-denied window(s) were excluded"),
+				skippedUserMoveCount, ignoredAccessDenied);
 		}
 		else {
 			LOG_EVENT(_T("VERIFY"), _T("All windows at expected positions"));
@@ -1255,10 +1337,11 @@ void VerifyRestoredWindows()
 	else if (inst._RestoreRetryCount < inst._RestoreRetryLimit) {
 		inst._RestoreRetryCount++;
 		inst._AwaitingRestoreRetry = TRUE;
-		if (ignoredAccessDenied > 0) {
+		if (ignoredAccessDenied > 0 || skippedUserMoveCount > 0) {
 			LOG_EVENTF(_T("VERIFY"),
-				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d. Ignoring %d access-denied window(s)"),
-				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit, ignoredAccessDenied);
+				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d. Skipping %d user-moved window(s) and ignoring %d access-denied window(s)"),
+				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit,
+				skippedUserMoveCount, ignoredAccessDenied);
 		}
 		else {
 			LOG_EVENTF(_T("VERIFY"),
@@ -1273,9 +1356,9 @@ void VerifyRestoredWindows()
 		for (const auto& detail : mismatchDetails) {
 			LOG_EVENT(_T("WARNING"), detail.c_str());
 		}
-		if (ignoredAccessDenied > 0) {
-			LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position; %d access-denied window(s) were excluded"),
-				mismatchCount, ignoredAccessDenied);
+		if (ignoredAccessDenied > 0 || skippedUserMoveCount > 0) {
+			LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position; %d user-moved window(s) and %d access-denied window(s) were excluded"),
+				mismatchCount, skippedUserMoveCount, ignoredAccessDenied);
 		}
 		else {
 			LOG_EVENTF(_T("WARNING"), _T("%d window(s) not at expected position"), mismatchCount);
