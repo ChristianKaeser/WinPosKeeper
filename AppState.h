@@ -21,7 +21,7 @@
 #define DEFAULT_RESTORE_RETRY_LIMIT 4
 #define MIN_RESTORE_RETRY_LIMIT 0
 #define MAX_RESTORE_RETRY_LIMIT 10
-#define HISTORY_RATE_LIMIT_WINDOW_MS 1000
+#define HISTORY_SIZEMOVE_RATE_LIMIT_WINDOW_MS 3000
 #define MAX_HISTORY_ENTRIES_PER_WINDOW 1000
 #define MAX_HISTORY_LOG_EVENTS 4000
 #define PLACEMENT_TOLERANCE 20
@@ -67,6 +67,7 @@ struct WindowHistoryData {
 	FILETIME lastRecordedUtc;
 	WINDOWPLACEMENT lastPlacement;
 	BOOL hasLastPlacement;
+	BOOL inSizeMove;
 	ULONGLONG rateLimitUntilTick;
 	ULONGLONG pendingSelfActionUntilTick;
 	WINDOWPLACEMENT pendingPlacement;
@@ -125,6 +126,7 @@ public:
 	static InstanceData g_Instance;
 
 	HWINEVENTHOOK _Hook;
+	HWINEVENTHOOK _MoveSizeHook;
 	std::map<UINT64, int> _ConfigIds;
 	int _NextConfigId;
 	std::map<UINT64, ConfigSnapshotInfo> _ConfigSnapshots;

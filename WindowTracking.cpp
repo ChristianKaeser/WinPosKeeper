@@ -73,6 +73,7 @@ static BOOL IsTrackableTopLevelWindow(HWND hwnd);
 static void TrimWindowHistory(WindowHistoryData& history);
 static void MarkWindowHistorySelfAction(HWND hwnd);
 static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture);
+static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail);
 static BOOL FlushPendingWindowHistoryEntriesInternal(BOOL refreshUi);
 static BOOL PurgeClosedWindowHistoryEntriesInternal(BOOL refreshUi);
 static void ScheduleWindowHistoryFlushTimer();
@@ -99,6 +100,7 @@ WindowHistoryData::WindowHistoryData()
 	ZeroMemory(&lastRecordedUtc, sizeof(lastRecordedUtc));
 	ZeroMemory(&lastPlacement, sizeof(lastPlacement));
 	hasLastPlacement = FALSE;
+	inSizeMove = FALSE;
 	rateLimitUntilTick = 0;
 	pendingSelfActionUntilTick = 0;
 	ZeroMemory(&pendingPlacement, sizeof(pendingPlacement));
@@ -246,6 +248,7 @@ static void UpdateSnapshotForCurrentConfig(UINT64 configHash, DWORD windowCount)
 InstanceData::InstanceData()
 {
 	_Hook = NULL;
+	_MoveSizeHook = NULL;
 	_ConfigHash = 0;
 	_NumMonitors = 0;
 	_WindowData.resize(32);
@@ -312,6 +315,8 @@ void InstanceData::Shutdown()
 {
 	if (_Hook != NULL) UnhookWinEvent(_Hook);
 	_Hook = NULL;
+	if (_MoveSizeHook != NULL) UnhookWinEvent(_MoveSizeHook);
+	_MoveSizeHook = NULL;
 
 	_WindowData.clear();
 	_ConfigIds.clear();
@@ -576,6 +581,50 @@ static void AppendWindowHistoryEntry(WindowHistoryData& history, const WINDOWPLA
 	TrimWindowHistory(history);
 }
 
+static BOOL TryReadWindowHistorySnapshot(HWND hwnd,
+	WindowHistoryData** historyOut,
+	WINDOWPLACEMENT* placementOut,
+	TCHAR* windowTitle,
+	size_t cchWindowTitle)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled || !IsTrackableTopLevelWindow(hwnd)) {
+		return FALSE;
+	}
+
+	TCHAR wndClass[40];
+	TCHAR processPath[MAX_PATH];
+	DWORD processId = 0;
+	if (windowTitle != NULL && cchWindowTitle > 0) {
+		windowTitle[0] = '\0';
+	}
+
+	ReadWindowIdentity(hwnd,
+		wndClass, _countof(wndClass),
+		processPath, _countof(processPath),
+		windowTitle, cchWindowTitle,
+		&processId);
+	if (wndClass[0] == '\0' || processId == 0) {
+		return FALSE;
+	}
+
+	WINDOWPLACEMENT placement = {};
+	placement.length = sizeof(placement);
+	if (!GetWindowPlacement(hwnd, &placement)) {
+		return FALSE;
+	}
+
+	WindowHistoryData& history = GetOrCreateWindowHistory(hwnd, processId, wndClass, processPath,
+		windowTitle != NULL ? windowTitle : _T(""));
+	if (historyOut != NULL) {
+		*historyOut = &history;
+	}
+	if (placementOut != NULL) {
+		*placementOut = placement;
+	}
+	return TRUE;
+}
+
 static void ClearPendingWindowHistory(WindowHistoryData& history)
 {
 	history.hasPendingPlacement = FALSE;
@@ -620,7 +669,7 @@ static BOOL FlushPendingWindowHistoryEntry(WindowHistoryData& history, ULONGLONG
 		history.pendingWindowTitle.c_str(),
 		&history.pendingRecordedUtc);
 	ClearPendingWindowHistory(history);
-	history.rateLimitUntilTick = nowTick + HISTORY_RATE_LIMIT_WINDOW_MS;
+	history.rateLimitUntilTick = 0;
 	return TRUE;
 }
 
@@ -750,74 +799,138 @@ static void MarkWindowHistorySelfAction(HWND hwnd)
 static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
 {
 	auto& inst = InstanceData::g_Instance;
-	if (!inst._HistoryTrackingEnabled || !IsTrackableTopLevelWindow(hwnd)) {
+	if (!inst._HistoryTrackingEnabled) {
 		return;
 	}
 
 	PurgeClosedWindowHistoryEntriesInternal(FALSE);
 	FlushPendingWindowHistoryEntriesInternal(FALSE);
 
-	TCHAR wndClass[40];
-	TCHAR processPath[MAX_PATH];
-	TCHAR windowTitle[256];
-	DWORD processId = 0;
-	ReadWindowIdentity(hwnd,
-		wndClass, _countof(wndClass),
-		processPath, _countof(processPath),
-		windowTitle, _countof(windowTitle),
-		&processId);
-	if (wndClass[0] == '\0' || processId == 0) {
-		return;
-	}
-
+	WindowHistoryData* history = NULL;
 	WINDOWPLACEMENT placement = {};
-	placement.length = sizeof(placement);
-	if (!GetWindowPlacement(hwnd, &placement)) {
+	TCHAR windowTitle[256];
+	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
 		return;
 	}
-
-	WindowHistoryData& history = GetOrCreateWindowHistory(hwnd, processId, wndClass, processPath, windowTitle);
-	if (HasEquivalentWindowHistoryState(history, placement, windowTitle)) {
-		if (history.hasPendingPlacement) {
-			ClearPendingWindowHistory(history);
+	if (HasEquivalentWindowHistoryState(*history, placement, windowTitle)) {
+		if (history->hasPendingPlacement) {
+			ClearPendingWindowHistory(*history);
 			ScheduleWindowHistoryFlushTimer();
 		}
 		return;
 	}
 
-	LPCTSTR resolvedSource = ResolveWindowHistorySource(history, sourceOverride);
+	LPCTSTR resolvedSource = ResolveWindowHistorySource(*history, sourceOverride);
 	LPCTSTR resolvedDetail = (detail != NULL && detail[0] != '\0') ? detail : _T("location change");
 	ULONGLONG nowTick = GetTickCount64();
 	if (forceCapture) {
-		history.rateLimitUntilTick = 0;
-		ClearPendingWindowHistory(history);
-		AppendWindowHistoryEntry(history, placement, resolvedSource, resolvedDetail, windowTitle);
+		history->rateLimitUntilTick = 0;
+		ClearPendingWindowHistory(*history);
+		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle);
 		ScheduleWindowHistoryFlushTimer();
 		RefreshWindowHistoryInspector();
 		return;
 	}
 
-	if (!IsWindowHistoryRateLimited(history, nowTick)) {
-		ClearPendingWindowHistory(history);
-		AppendWindowHistoryEntry(history, placement, resolvedSource, resolvedDetail, windowTitle);
-		history.rateLimitUntilTick = nowTick + HISTORY_RATE_LIMIT_WINDOW_MS;
+	if (!history->inSizeMove) {
+		history->rateLimitUntilTick = 0;
+		ClearPendingWindowHistory(*history);
+		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle);
 		ScheduleWindowHistoryFlushTimer();
 		RefreshWindowHistoryInspector();
 		return;
 	}
 
-	history.pendingPlacement = placement;
-	GetSystemTimeAsFileTime(&history.pendingRecordedUtc);
-	history.hasPendingPlacement = TRUE;
-	history.pendingSource = resolvedSource;
-	history.pendingDetail = resolvedDetail;
-	history.pendingWindowTitle = windowTitle;
+	history->pendingPlacement = placement;
+	GetSystemTimeAsFileTime(&history->pendingRecordedUtc);
+	history->hasPendingPlacement = TRUE;
+	history->pendingSource = resolvedSource;
+	history->pendingDetail = resolvedDetail;
+	history->pendingWindowTitle = windowTitle;
+	if (!IsWindowHistoryRateLimited(*history, nowTick)) {
+		history->rateLimitUntilTick = nowTick + HISTORY_SIZEMOVE_RATE_LIMIT_WINDOW_MS;
+	}
 	ScheduleWindowHistoryFlushTimer();
+}
+
+static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled) {
+		return;
+	}
+
+	PurgeClosedWindowHistoryEntriesInternal(FALSE);
+	FlushPendingWindowHistoryEntriesInternal(FALSE);
+
+	WindowHistoryData* history = NULL;
+	WINDOWPLACEMENT placement = {};
+	TCHAR windowTitle[256];
+	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
+		return;
+	}
+
+	LPCTSTR resolvedSource = ResolveWindowHistorySource(*history, sourceOverride);
+	AppendWindowHistoryEntry(*history, placement,
+		resolvedSource,
+		(detail != NULL && detail[0] != '\0') ? detail : _T("window event"),
+		windowTitle);
+	ScheduleWindowHistoryFlushTimer();
+	RefreshWindowHistoryInspector();
 }
 
 void CaptureWindowHistoryEvent(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
 {
 	RecordWindowHistorySnapshot(hwnd, sourceOverride, detail, forceCapture);
+}
+
+void CaptureWindowHistoryEnterSizeMove(HWND hwnd, LPCTSTR sourceOverride)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled) {
+		return;
+	}
+
+	PurgeClosedWindowHistoryEntriesInternal(FALSE);
+	FlushPendingWindowHistoryEntriesInternal(FALSE);
+
+	WindowHistoryData* history = NULL;
+	WINDOWPLACEMENT placement = {};
+	TCHAR windowTitle[256];
+	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
+		return;
+	}
+
+	history->inSizeMove = TRUE;
+	history->rateLimitUntilTick = 0;
+	ClearPendingWindowHistory(*history);
+	RecordWindowHistoryMarker(hwnd, sourceOverride, _T("WM_ENTERSIZEMOVE"));
+}
+
+void CaptureWindowHistoryExitSizeMove(HWND hwnd, LPCTSTR sourceOverride)
+{
+	auto& inst = InstanceData::g_Instance;
+	if (!inst._HistoryTrackingEnabled) {
+		return;
+	}
+
+	PurgeClosedWindowHistoryEntriesInternal(FALSE);
+	FlushPendingWindowHistoryEntriesInternal(FALSE);
+
+	WindowHistoryData* history = NULL;
+	WINDOWPLACEMENT placement = {};
+	TCHAR windowTitle[256];
+	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
+		return;
+	}
+
+	history->inSizeMove = FALSE;
+	history->rateLimitUntilTick = 0;
+	if (history->hasPendingPlacement) {
+		FlushPendingWindowHistoryEntry(*history, GetTickCount64());
+	}
+	ClearPendingWindowHistory(*history);
+	RecordWindowHistoryMarker(hwnd, sourceOverride, _T("WM_EXITSIZEMOVE"));
 }
 
 void FlushPendingWindowHistoryEntries()

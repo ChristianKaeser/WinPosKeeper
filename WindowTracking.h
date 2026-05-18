@@ -14,6 +14,8 @@ void CancelPendingRestores();
 void RetryPendingRestores();
 void VerifyRestoredWindows();
 void CaptureWindowHistoryEvent(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture);
+void CaptureWindowHistoryEnterSizeMove(HWND hwnd, LPCTSTR sourceOverride);
+void CaptureWindowHistoryExitSizeMove(HWND hwnd, LPCTSTR sourceOverride);
 void FlushPendingWindowHistoryEntries();
 void PurgeClosedWindowHistoryEntries();
 void ClearWindowHistoryTracking();

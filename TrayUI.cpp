@@ -699,6 +699,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	ProcessDesktopWindows();
 	PrimeWindowHistoryTracking(_T("startup snapshot"));
 	InstanceData::g_Instance._Hook = HookDisplayChange();
+	InstanceData::g_Instance._MoveSizeHook = HookWindowMoveSize();
 	WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
 	AddTrayIcon(hWnd);

@@ -210,10 +210,26 @@ VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK hWinEventHook, DWORD dwEvent, H
 	UNREFERENCED_PARAMETER(idChild);
 	UNREFERENCED_PARAMETER(dwEventThread);
 	UNREFERENCED_PARAMETER(dwmsEventTime);
-	if (hwnd != NULL && dwEvent == EVENT_OBJECT_LOCATIONCHANGE)
+	if (hwnd == NULL) {
+		return;
+	}
+
+	if (dwEvent == EVENT_SYSTEM_MOVESIZESTART)
+	{
+		CaptureWindowHistoryEnterSizeMove(hwnd, NULL);
+		return;
+	}
+
+	if (dwEvent == EVENT_SYSTEM_MOVESIZEEND)
+	{
+		CaptureWindowHistoryExitSizeMove(hwnd, NULL);
+		return;
+	}
+
+	if (dwEvent == EVENT_OBJECT_LOCATIONCHANGE)
 	{
 		if (InstanceData::g_Instance._HistoryTrackingEnabled) {
-			CaptureWindowHistoryEvent(hwnd, NULL, _T("location change"), FALSE);
+			CaptureWindowHistoryEvent(hwnd, NULL, _T("WM_WINDOWPOSCHANGED"), FALSE);
 		}
 		if (InstanceData::g_Instance.InChangingState) return;
 		SetTimer(InstanceData::g_Instance._MainWnd, CAPTURE_TIMER_ID, 1000, SaveTimerCallback);
@@ -226,6 +242,16 @@ HWINEVENTHOOK HookDisplayChange()
 		NULL, WinEventProcCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
 	if (hook == NULL) {
 		LogWin32Error(_T("ERROR"), _T("SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE)"), GetLastError());
+	}
+	return hook;
+}
+
+HWINEVENTHOOK HookWindowMoveSize()
+{
+	HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND,
+		NULL, WinEventProcCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
+	if (hook == NULL) {
+		LogWin32Error(_T("ERROR"), _T("SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART/END)"), GetLastError());
 	}
 	return hook;
 }
