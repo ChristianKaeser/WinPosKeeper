@@ -189,6 +189,15 @@ VOID CALLBACK TimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime
 {
 	UNREFERENCED_PARAMETER(uMsg);
 	UNREFERENCED_PARAMETER(dwTime);
+	auto& inst = InstanceData::g_Instance;
+	if (inst._SessionLocked) {
+		if (!inst._DeferredDisplayChangeUntilUnlock) {
+			LOG_EVENT(_T("SESSION"), _T("Display change reaction deferred until session unlock"));
+		}
+		inst._DeferredDisplayChangeUntilUnlock = TRUE;
+		KillTimer(hwnd, idEvent);
+		return;
+	}
 	ProcessMonitors();
 	KillTimer(hwnd, idEvent);
 }

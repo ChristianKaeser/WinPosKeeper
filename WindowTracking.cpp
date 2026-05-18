@@ -278,6 +278,10 @@ InstanceData::InstanceData()
 	_hHistoryExportButton = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
+	_SessionLocked = FALSE;
+	_SessionNotificationsRegistered = FALSE;
+	_DeferredDisplayChangeUntilUnlock = FALSE;
+	_DeferredRestoreVerifyUntilUnlock = FALSE;
 	RestoreOnDisconnect = true;
 	PersistPositions = false;
 	LoggingEnabled = true;

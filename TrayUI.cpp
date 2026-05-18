@@ -48,6 +48,12 @@ static RECT GetMainTabContentRect(HWND hWnd)
 
 static void UpdateMainMenuChecks(HWND hWnd);
 
+static void ScheduleDisplaySettleAfterUnlock(HWND hWnd)
+{
+	KillTimer(hWnd, DISPLAY_SETTLE_TIMER_ID);
+	SetTimer(hWnd, DISPLAY_SETTLE_TIMER_ID, DISPLAY_SETTLE_MS, TimerCallback);
+}
+
 static void ShowChildControl(HWND hWnd, BOOL show)
 {
 	if (hWnd != NULL) {
@@ -610,6 +616,13 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		return FALSE;
 	}
 
+	if (WTSRegisterSessionNotification(hWnd, NOTIFY_FOR_THIS_SESSION)) {
+		InstanceData::g_Instance._SessionNotificationsRegistered = TRUE;
+	}
+	else {
+		LogWin32Error(_T("WARNING"), _T("WTSRegisterSessionNotification"), GetLastError());
+	}
+
 	TCITEM tie = {};
 	tie.mask = TCIF_TEXT;
 	tie.pszText = const_cast<LPTSTR>(_T("Log"));
@@ -718,8 +731,45 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		KillTimer(hWnd, DISPLAY_SETTLE_TIMER_ID);
 		KillTimer(hWnd, VERIFY_TIMER_ID);
 		CancelPendingRestores();
+		InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock = FALSE;
 		InstanceData::g_Instance.InChangingState = true;
-		SetTimer(hWnd, DISPLAY_SETTLE_TIMER_ID, DISPLAY_SETTLE_MS, TimerCallback);
+		if (InstanceData::g_Instance._SessionLocked) {
+			if (!InstanceData::g_Instance._DeferredDisplayChangeUntilUnlock) {
+				LOG_EVENT(_T("SESSION"), _T("WM_DISPLAYCHANGE will be applied after session unlock"));
+			}
+			InstanceData::g_Instance._DeferredDisplayChangeUntilUnlock = TRUE;
+		}
+		else {
+			InstanceData::g_Instance._DeferredDisplayChangeUntilUnlock = FALSE;
+			ScheduleDisplaySettleAfterUnlock(hWnd);
+		}
+		break;
+	case WM_WTSSESSION_CHANGE:
+		if (wParam == WTS_SESSION_LOCK) {
+			if (!InstanceData::g_Instance._SessionLocked) {
+				InstanceData::g_Instance._SessionLocked = TRUE;
+				LOG_EVENT(_T("SESSION"), _T("Session locked"));
+			}
+			return 0;
+		}
+		if (wParam == WTS_SESSION_UNLOCK) {
+			BOOL wasLocked = InstanceData::g_Instance._SessionLocked;
+			InstanceData::g_Instance._SessionLocked = FALSE;
+			if (wasLocked) {
+				LOG_EVENT(_T("SESSION"), _T("Session unlocked"));
+			}
+			if (InstanceData::g_Instance._DeferredDisplayChangeUntilUnlock) {
+				InstanceData::g_Instance._DeferredDisplayChangeUntilUnlock = FALSE;
+				LOG_EVENT(_T("SESSION"), _T("Applying deferred display change after session unlock"));
+				ScheduleDisplaySettleAfterUnlock(hWnd);
+			}
+			else if (InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock) {
+				InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock = FALSE;
+				LOG_EVENT(_T("SESSION"), _T("Resuming deferred restore verification after session unlock"));
+				SetTimer(hWnd, VERIFY_TIMER_ID, 1, NULL);
+			}
+			return 0;
+		}
 		break;
 	case WM_COMMAND:
 		{
@@ -863,6 +913,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_TIMER:
 		if (wParam == VERIFY_TIMER_ID) {
 			KillTimer(hWnd, VERIFY_TIMER_ID);
+			if (InstanceData::g_Instance._SessionLocked) {
+				if (!InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock) {
+					LOG_EVENT(_T("SESSION"), _T("Restore verification deferred until session unlock"));
+				}
+				InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock = TRUE;
+				return 0;
+			}
+			InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock = FALSE;
 			if (InstanceData::g_Instance._AwaitingRestoreRetry) {
 				RetryPendingRestores();
 			}
@@ -884,6 +942,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_DESTROY:
 		{
+			if (InstanceData::g_Instance._SessionNotificationsRegistered) {
+				if (!WTSUnRegisterSessionNotification(hWnd)) {
+					LogWin32Error(_T("WARNING"), _T("WTSUnRegisterSessionNotification"), GetLastError());
+				}
+				InstanceData::g_Instance._SessionNotificationsRegistered = FALSE;
+			}
 			InstanceData::g_Instance.SaveToDisk(_T("application exit"));
 			NOTIFYICONDATA icon = {};
 			icon.cbSize = sizeof(icon);

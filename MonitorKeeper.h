@@ -10,9 +10,11 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <cguid.h>
+#include <wtsapi32.h>
 
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "wtsapi32.lib")
 
 #include <tchar.h>
 #include <strsafe.h>

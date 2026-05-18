@@ -157,6 +157,10 @@ public:
 	HWND _hHistoryExportButton;
 	HFONT _hLogFont;
 	BOOL InChangingState;
+	BOOL _SessionLocked;
+	BOOL _SessionNotificationsRegistered;
+	BOOL _DeferredDisplayChangeUntilUnlock;
+	BOOL _DeferredRestoreVerifyUntilUnlock;
 	BOOL RestoreOnDisconnect;
 	BOOL PersistPositions;
 	BOOL LoggingEnabled;
