@@ -845,7 +845,8 @@ static void UpdateWindowHistoryDetails(UINT_PTR selectedHwnd)
 		(LPARAM)_T("Time                    Source           Rect                         Show              Detail"));
 	SendMessage(inst._hHistoryTimelineList, LB_ADDSTRING, 0,
 		(LPARAM)_T("----------------------- ---------------- --------------------------- ----------------- ----------------------------------------------"));
-	for (const auto& row : rows) {
+	for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+		const HistoryTimelineDisplayEntry& row = *it;
 		TCHAR timeText[64];
 		TCHAR rectText[64];
 		TCHAR detailText[1024];
