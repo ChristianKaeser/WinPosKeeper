@@ -21,6 +21,10 @@ enum MainWindowTabPage {
 	MainWindowTabHistory = 4,
 };
 
+static const UINT_PTR STARTUP_SPLASH_TIMER_ID = 6;
+static const UINT STARTUP_SPLASH_MS = 2000;
+static HWND g_hStartupSplash = NULL;
+
 static int GetSelectedMainTab()
 {
 	HWND hTab = InstanceData::g_Instance._hMainTab;
@@ -47,6 +51,39 @@ static RECT GetMainTabContentRect(HWND hWnd)
 }
 
 static void UpdateMainMenuChecks(HWND hWnd);
+
+static void DismissStartupSplash()
+{
+	if (g_hStartupSplash != NULL) {
+		DestroyWindow(g_hStartupSplash);
+		g_hStartupSplash = NULL;
+	}
+}
+
+static void ShowStartupSplash(HINSTANCE hInstance)
+{
+	POINT cursor = {};
+	GetCursorPos(&cursor);
+	HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+	MONITORINFO monitorInfo = {};
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfo(monitor, &monitorInfo)) {
+		SetRect(&monitorInfo.rcWork, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+	}
+
+	int x = monitorInfo.rcWork.left + ((monitorInfo.rcWork.right - monitorInfo.rcWork.left) - STATUS_ICON_SIZE) / 2;
+	int y = monitorInfo.rcWork.top + ((monitorInfo.rcWork.bottom - monitorInfo.rcWork.top) - STATUS_ICON_SIZE) / 2;
+	g_hStartupSplash = CreateWindowEx(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, _T("STATIC"), NULL,
+		WS_POPUP | SS_ICON | SS_CENTERIMAGE,
+		x, y, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
+		NULL, NULL, hInstance, NULL);
+	if (g_hStartupSplash != NULL) {
+		SendMessage(g_hStartupSplash, STM_SETIMAGE, IMAGE_ICON,
+			(LPARAM)LoadAppIconSized(hInstance, STATUS_ICON_SIZE, STATUS_ICON_SIZE));
+		ShowWindow(g_hStartupSplash, SW_SHOWNOACTIVATE);
+		UpdateWindow(g_hStartupSplash);
+	}
+}
 
 static void ScheduleDisplaySettleAfterUnlock(HWND hWnd)
 {
@@ -496,6 +533,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	}
 
 	InstanceData::g_Instance._MainWnd = hWnd;
+	ShowStartupSplash(hInstance);
+	if (g_hStartupSplash != NULL) {
+		SetTimer(hWnd, STARTUP_SPLASH_TIMER_ID, STARTUP_SPLASH_MS, NULL);
+	}
 	InstanceData::g_Instance._hMainTab = CreateWindowEx(0, WC_TABCONTROL, _T(""),
 		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 		4, STATUS_HEIGHT + 8, 690, 400,
@@ -912,7 +953,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		break;
 	case WM_TIMER:
-		if (wParam == VERIFY_TIMER_ID) {
+		if (wParam == STARTUP_SPLASH_TIMER_ID) {
+			KillTimer(hWnd, STARTUP_SPLASH_TIMER_ID);
+			DismissStartupSplash();
+		}
+		else if (wParam == VERIFY_TIMER_ID) {
 			KillTimer(hWnd, VERIFY_TIMER_ID);
 			if (InstanceData::g_Instance._SessionLocked) {
 				if (!InstanceData::g_Instance._DeferredRestoreVerifyUntilUnlock) {
@@ -943,6 +988,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_DESTROY:
 		{
+			DismissStartupSplash();
 			if (InstanceData::g_Instance._SessionNotificationsRegistered) {
 				if (!WTSUnRegisterSessionNotification(hWnd)) {
 					LogWin32Error(_T("WARNING"), _T("WTSUnRegisterSessionNotification"), GetLastError());
