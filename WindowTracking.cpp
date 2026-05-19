@@ -79,6 +79,7 @@ static BOOL FlushPendingWindowHistoryEntriesInternal(BOOL refreshUi);
 static BOOL PurgeClosedWindowHistoryEntriesInternal(BOOL refreshUi);
 static void ScheduleWindowHistoryFlushTimer();
 static SavedWindowData* FindTrackedWindowByHwnd(HWND hwnd);
+static void SetRestorePhaseActive(BOOL active);
 
 WindowHistoryEntry::WindowHistoryEntry()
 {
@@ -102,6 +103,7 @@ WindowHistoryData::WindowHistoryData()
 	ZeroMemory(&lastRecordedUtc, sizeof(lastRecordedUtc));
 	ZeroMemory(&lastPlacement, sizeof(lastPlacement));
 	hasLastPlacement = FALSE;
+	allowCaptureDuringRestore = FALSE;
 	inSizeMove = FALSE;
 	rateLimitUntilTick = 0;
 	pendingSelfActionUntilTick = 0;
@@ -283,6 +285,7 @@ InstanceData::InstanceData()
 	_hHistoryExportButton = NULL;
 	_hLogFont = NULL;
 	InChangingState = false;
+	_RestorePhaseActive = FALSE;
 	_SessionLocked = FALSE;
 	_SessionNotificationsRegistered = FALSE;
 	_DeferredDisplayChangeUntilUnlock = FALSE;
@@ -331,6 +334,7 @@ void InstanceData::Shutdown()
 	_HistoryLog.clear();
 	_WindowHistory.clear();
 	_HistoryNextSequence = 0;
+	_RestorePhaseActive = FALSE;
 	_ReadmeText.clear();
 
 	if (_hLogFont != NULL)
@@ -450,6 +454,7 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 		_T("Applying config #%d captured %s with %d stored positions; currently tracking %d window(s)"),
 		configId, timeText, storedPositions, currentWindows);
 	LOG_EVENT(_T("RESTORE"), summary);
+	SetRestorePhaseActive(TRUE);
 	_RestoreRetryCount = 0;
 	_AwaitingRestoreRetry = FALSE;
 	for (auto& wd : _WindowData)
@@ -468,6 +473,9 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 			}
 		}
 	}
+	if (attempted == 0) {
+		SetRestorePhaseActive(FALSE);
+	}
 
 	return attempted;
 }
@@ -475,6 +483,7 @@ int InstanceData::RestoreWindowPositions(UINT64 configHash)
 void CancelPendingRestores()
 {
 	auto& inst = InstanceData::g_Instance;
+	SetRestorePhaseActive(FALSE);
 	inst._RestoreRetryCount = 0;
 	inst._AwaitingRestoreRetry = FALSE;
 	for (auto& wd : inst._WindowData)
@@ -811,6 +820,17 @@ static SavedWindowData* FindTrackedWindowByHwnd(HWND hwnd)
 	return NULL;
 }
 
+static void SetRestorePhaseActive(BOOL active)
+{
+	auto& inst = InstanceData::g_Instance;
+	inst._RestorePhaseActive = active;
+	if (!active) {
+		for (auto& pair : inst._WindowHistory) {
+			pair.second.allowCaptureDuringRestore = FALSE;
+		}
+	}
+}
+
 static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture)
 {
 	auto& inst = InstanceData::g_Instance;
@@ -825,6 +845,9 @@ static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTS
 	WINDOWPLACEMENT placement = {};
 	TCHAR windowTitle[256];
 	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
+		return;
+	}
+	if (inst._RestorePhaseActive && !forceCapture && !history->allowCaptureDuringRestore) {
 		return;
 	}
 	if (HasEquivalentWindowHistoryState(*history, placement, windowTitle)) {
@@ -884,6 +907,9 @@ static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR
 	if (!TryReadWindowHistorySnapshot(hwnd, &history, &placement, windowTitle, _countof(windowTitle))) {
 		return;
 	}
+	if (inst._RestorePhaseActive && !history->allowCaptureDuringRestore) {
+		return;
+	}
 
 	LPCTSTR resolvedSource = ResolveWindowHistorySource(*history, sourceOverride);
 	AppendWindowHistoryEntry(*history, placement,
@@ -929,6 +955,7 @@ void CaptureWindowHistoryEnterSizeMove(HWND hwnd, LPCTSTR sourceOverride)
 		return;
 	}
 
+	history->allowCaptureDuringRestore = TRUE;
 	history->inSizeMove = TRUE;
 	history->rateLimitUntilTick = 0;
 	ClearPendingWindowHistory(*history);
@@ -1227,6 +1254,7 @@ void RetryPendingRestores()
 
 	inst._AwaitingRestoreRetry = FALSE;
 	if (!hasEligibleWindows) {
+		SetRestorePhaseActive(FALSE);
 		inst.InChangingState = false;
 		ProcessDesktopWindows();
 		UpdateStatusPanel();
@@ -1330,6 +1358,7 @@ void VerifyRestoredWindows()
 		}
 		inst._RestoreRetryCount = 0;
 		inst._AwaitingRestoreRetry = FALSE;
+		SetRestorePhaseActive(FALSE);
 		inst.InChangingState = false;
 		ProcessDesktopWindows();
 		return;
@@ -1366,6 +1395,7 @@ void VerifyRestoredWindows()
 	}
 	inst._RestoreRetryCount = 0;
 	inst._AwaitingRestoreRetry = FALSE;
+	SetRestorePhaseActive(FALSE);
 	inst.InChangingState = false;
 	UpdateStatusPanel();
 }

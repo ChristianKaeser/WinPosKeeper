@@ -67,6 +67,7 @@ struct WindowHistoryData {
 	FILETIME lastRecordedUtc;
 	WINDOWPLACEMENT lastPlacement;
 	BOOL hasLastPlacement;
+	BOOL allowCaptureDuringRestore;
 	BOOL inSizeMove;
 	ULONGLONG rateLimitUntilTick;
 	ULONGLONG pendingSelfActionUntilTick;
@@ -160,6 +161,7 @@ public:
 	HWND _hHistoryExportButton;
 	HFONT _hLogFont;
 	BOOL InChangingState;
+	BOOL _RestorePhaseActive;
 	BOOL _SessionLocked;
 	BOOL _SessionNotificationsRegistered;
 	BOOL _DeferredDisplayChangeUntilUnlock;
