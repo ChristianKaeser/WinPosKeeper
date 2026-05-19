@@ -137,11 +137,11 @@ static void ApplySettingsFromControls(HWND hWnd)
 
 	int delayMs = inst._RestoreRetryDelayMs;
 	int retryLimit = inst._RestoreRetryLimit;
-	if (!TryReadSettingsInteger(hWnd, inst._hSettingsDelayEdit, _T("Restore verification delay"),
+	if (!TryReadSettingsInteger(hWnd, inst._hSettingsDelayEdit, _T("Verification pass delay"),
 		MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS, &delayMs)) {
 		return;
 	}
-	if (!TryReadSettingsInteger(hWnd, inst._hSettingsRetryEdit, _T("Retry count"),
+	if (!TryReadSettingsInteger(hWnd, inst._hSettingsRetryEdit, _T("Additional verification passes"),
 		MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT, &retryLimit)) {
 		return;
 	}
@@ -173,7 +173,7 @@ static void ApplySettingsFromControls(HWND hWnd)
 
 	TCHAR summary[512];
 	StringCchPrintf(summary, _countof(summary),
-		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, window history=%s, retry delay=%d ms, retry limit=%d"),
+		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, window history=%s, verification delay=%d ms, additional verification passes=%d"),
 		newRestoreOnDisconnect ? _T("ON") : _T("OFF"),
 		newAutostart ? _T("ON") : _T("OFF"),
 		newPersistPositions ? _T("ON") : _T("OFF"),
@@ -530,14 +530,14 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		4, STATUS_HEIGHT + 8, 690, 400,
 		hWnd, (HMENU)IDC_README_VIEW, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsIntro = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"),
-		_T("The quick tray/menu toggles are mirrored here, together with the restore retry timing.\r\n\r\n")
-		_T("Disk persistence only stores same-session restart recovery data for still-running windows. It is not used to guess matches across a new Windows boot or session.\r\n\r\n")
-		_T("Window history tracking keeps an in-memory timeline of geometry changes per HWND and can export a merged TSV with app events for analysis."),
+		_T("The tray/menu toggles are mirrored here together with the restore verification timing.\r\n\r\n")
+		_T("Verification delay is the pause before each full verification pass. Additional verification passes controls how many extra full recheck/reapply cycles can run after the initial restore. Windows that enter size/move are skipped for the remaining passes.\r\n\r\n")
+		_T("Disk persistence only keeps same-session restart recovery data for still-running windows. Window history keeps an in-memory HWND timeline and can export merged TSV diagnostics."),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
 		4, STATUS_HEIGHT + 8, 690, 120,
 		hWnd, (HMENU)IDC_SETTINGS_INTRO, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsRestoreCheck = CreateWindowEx(0, _T("BUTTON"),
-		_T("Restore saved positions after a monitor disconnect or display-settle event"),
+		_T("Allow restore attempts when the monitor count drops (disconnect / undock)"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 136, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_RESTORE_CHECK, hInstance, NULL);
@@ -547,22 +547,22 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		4, STATUS_HEIGHT + 160, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_AUTOSTART_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsPersistCheck = CreateWindowEx(0, _T("BUTTON"),
-		_T("Keep same-session restart recovery data on disk"),
+		_T("Keep same-session restart recovery data on disk for app restarts"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 184, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_PERSIST_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsLoggingCheck = CreateWindowEx(0, _T("BUTTON"),
-		_T("Record diagnostic messages in the Log tab"),
+		_T("Keep diagnostic messages in the Log tab"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 208, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_LOGGING_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsHistoryCheck = CreateWindowEx(0, _T("BUTTON"),
-		_T("Keep in-memory window history and allow TSV export for bug investigation"),
+		_T("Keep in-memory window history and enable TSV export for investigation"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 232, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_HISTORY_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsDelayLabel = CreateWindowEx(0, _T("STATIC"),
-		_T("Restore verification delay (ms):"),
+		_T("Verification pass delay (ms):"),
 		WS_CHILD,
 		4, STATUS_HEIGHT + 260, 240, 20,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_LABEL, hInstance, NULL);
@@ -571,7 +571,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		248, STATUS_HEIGHT + 256, 64, 24,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_EDIT, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsRetryLabel = CreateWindowEx(0, _T("STATIC"),
-		_T("Additional restore retries after mismatch:"),
+		_T("Additional full verification passes:"),
 		WS_CHILD,
 		4, STATUS_HEIGHT + 288, 240, 20,
 		hWnd, (HMENU)IDC_SETTINGS_RETRY_LABEL, hInstance, NULL);
