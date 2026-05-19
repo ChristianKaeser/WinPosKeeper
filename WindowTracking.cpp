@@ -73,6 +73,7 @@ static void FormatRectTransitionForLog(const RECT* fromRect, const RECT* toRect,
 static BOOL IsTrackableTopLevelWindow(HWND hwnd);
 static void TrimWindowHistory(WindowHistoryData& history);
 static void MarkWindowHistorySelfAction(HWND hwnd);
+static BOOL ShouldPreserveActualShowCommandDuringRestore(int expectedShowCmd, int actualShowCmd);
 static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail, BOOL forceCapture);
 static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR detail);
 static BOOL FlushPendingWindowHistoryEntriesInternal(BOOL refreshUi);
@@ -195,6 +196,9 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	}
 
 	WINDOWPLACEMENT place = it->second;
+	if (haveActualPlacement && ShouldPreserveActualShowCommandDuringRestore(place.showCmd, actual.showCmd)) {
+		place.showCmd = actual.showCmd;
+	}
 	TCHAR identity[512];
 	TCHAR rectTransition[160];
 	MarkWindowHistorySelfAction(m_hwnd);
@@ -1100,13 +1104,44 @@ int NormalizeShowCommandForCompare(int showCmd)
 	}
 }
 
+enum RestoreShowCommandClass {
+	RestoreShowCommandNormal = 0,
+	RestoreShowCommandMinimized = 1,
+	RestoreShowCommandMaximized = 2,
+	RestoreShowCommandOther = 3,
+};
+
+static RestoreShowCommandClass ClassifyShowCommandForRestore(int showCmd)
+{
+	switch (NormalizeShowCommandForCompare(showCmd))
+	{
+	case SW_SHOWNORMAL:
+		return RestoreShowCommandNormal;
+	case SW_SHOWMINIMIZED:
+		return RestoreShowCommandMinimized;
+	case SW_MAXIMIZE:
+		return RestoreShowCommandMaximized;
+	default:
+		return RestoreShowCommandOther;
+	}
+}
+
+static BOOL ShouldPreserveActualShowCommandDuringRestore(int expectedShowCmd, int actualShowCmd)
+{
+	RestoreShowCommandClass expectedClass = ClassifyShowCommandForRestore(expectedShowCmd);
+	RestoreShowCommandClass actualClass = ClassifyShowCommandForRestore(actualShowCmd);
+	return (expectedClass == RestoreShowCommandNormal || expectedClass == RestoreShowCommandMinimized) &&
+		(actualClass == RestoreShowCommandNormal || actualClass == RestoreShowCommandMinimized);
+}
+
 BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual)
 {
 	if (actual.length != sizeof(WINDOWPLACEMENT)) {
 		return TRUE;
 	}
 
-	if (NormalizeShowCommandForCompare(expected.showCmd) != NormalizeShowCommandForCompare(actual.showCmd)) {
+	if (!ShouldPreserveActualShowCommandDuringRestore(expected.showCmd, actual.showCmd) &&
+		NormalizeShowCommandForCompare(expected.showCmd) != NormalizeShowCommandForCompare(actual.showCmd)) {
 		return TRUE;
 	}
 
