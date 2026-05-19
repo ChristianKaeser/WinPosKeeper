@@ -298,7 +298,7 @@ InstanceData::InstanceData()
 	PersistPositions = false;
 	LoggingEnabled = true;
 	_HistoryTrackingEnabled = FALSE;
-	_RestoreRetryDelaySeconds = DEFAULT_RESTORE_RETRY_DELAY_SECONDS;
+	_RestoreRetryDelayMs = DEFAULT_RESTORE_RETRY_DELAY_MS;
 	_RestoreRetryLimit = DEFAULT_RESTORE_RETRY_LIMIT;
 	_RestoreRetryCount = 0;
 	_AwaitingRestoreRetry = FALSE;
@@ -1320,7 +1320,7 @@ void RetryPendingRestores()
 			inst._RestoreRetryCount, inst._RestoreRetryLimit, checkedCount, mismatchCount, successfulCalls);
 	}
 
-	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelaySeconds * 1000, NULL);
+	SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelayMs, NULL);
 	UpdateStatusPanel();
 }
 
@@ -1403,16 +1403,16 @@ void VerifyRestoredWindows()
 		inst._AwaitingRestoreRetry = TRUE;
 		if (ignoredAccessDenied > 0 || skippedUserMoveCount > 0) {
 			LOG_EVENTF(_T("VERIFY"),
-				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d. Skipping %d user-moved window(s) and ignoring %d access-denied window(s)"),
-				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit,
+				_T("%d window(s) still mismatched; waiting %d ms before retry %d/%d. Skipping %d user-moved window(s) and ignoring %d access-denied window(s)"),
+				mismatchCount, inst._RestoreRetryDelayMs, inst._RestoreRetryCount, inst._RestoreRetryLimit,
 				skippedUserMoveCount, ignoredAccessDenied);
 		}
 		else {
 			LOG_EVENTF(_T("VERIFY"),
-				_T("%d window(s) still mismatched; waiting %d seconds before retry %d/%d"),
-				mismatchCount, inst._RestoreRetryDelaySeconds, inst._RestoreRetryCount, inst._RestoreRetryLimit);
+				_T("%d window(s) still mismatched; waiting %d ms before retry %d/%d"),
+				mismatchCount, inst._RestoreRetryDelayMs, inst._RestoreRetryCount, inst._RestoreRetryLimit);
 		}
-		SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelaySeconds * 1000, NULL);
+		SetTimer(inst._MainWnd, VERIFY_TIMER_ID, inst._RestoreRetryDelayMs, NULL);
 		UpdateStatusPanel();
 		return;
 	}

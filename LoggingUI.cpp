@@ -1060,14 +1060,14 @@ void UpdateStatusPanel()
 	StringCchPrintf(text, _countof(text),
 		_T("Config #%d: 0x%016I64X  |  Monitors: %s\r\n")
 		_T("Saved layouts: %d  |  Window records: %d  |  Placements for current layout: %d  |  Placements total: %d  |  Open tracked windows: %d\r\n")
-		_T("Last full snapshot: %s  |  Last disk sync: %s  |  Data file: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Retry: %ds x %d  |  Window history: %s  |  Autostart: %s  |  Logging: %s"),
+		_T("Last full snapshot: %s  |  Last disk sync: %s  |  Data file: %d KB  |  Persist: %s  |  Restore on disconnect: %s  |  Retry: %d ms x %d  |  Window history: %s  |  Autostart: %s  |  Logging: %s"),
 		configId, inst._ConfigHash,
 		monitorSummary,
 		(int)configs.size(), windowRecords, currentConfigPlacements, totalPlacements, trackedWindows,
 		lastCapture, lastPersist,
 		fileSize / 1024, inst.PersistPositions ? _T("ON") : _T("OFF"),
 		inst.RestoreOnDisconnect ? _T("ON") : _T("OFF"),
-		inst._RestoreRetryDelaySeconds, inst._RestoreRetryLimit,
+		inst._RestoreRetryDelayMs, inst._RestoreRetryLimit,
 		inst._HistoryTrackingEnabled ? _T("ON") : _T("OFF"),
 		IsAutostartEnabled() ? _T("ON") : _T("OFF"),
 		inst.LoggingEnabled ? _T("ON") : _T("OFF"));

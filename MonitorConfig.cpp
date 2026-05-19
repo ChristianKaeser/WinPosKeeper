@@ -176,7 +176,7 @@ void ProcessMonitors()
 
 	if (didRestore) {
 		SetTimer(InstanceData::g_Instance._MainWnd, VERIFY_TIMER_ID,
-			InstanceData::g_Instance._RestoreRetryDelaySeconds * 1000, NULL);
+			InstanceData::g_Instance._RestoreRetryDelayMs, NULL);
 		UpdateStatusPanel();
 	}
 	else {

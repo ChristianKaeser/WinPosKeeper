@@ -15,9 +15,9 @@
 #define DISPLAY_SETTLE_MS 2000
 #define VERIFY_TIMER_ID 4
 #define HISTORY_FLUSH_TIMER_ID 5
-#define DEFAULT_RESTORE_RETRY_DELAY_SECONDS 2
-#define MIN_RESTORE_RETRY_DELAY_SECONDS 1
-#define MAX_RESTORE_RETRY_DELAY_SECONDS 30
+#define DEFAULT_RESTORE_RETRY_DELAY_MS 2000
+#define MIN_RESTORE_RETRY_DELAY_MS 100
+#define MAX_RESTORE_RETRY_DELAY_MS 30000
 #define DEFAULT_RESTORE_RETRY_LIMIT 4
 #define MIN_RESTORE_RETRY_LIMIT 0
 #define MAX_RESTORE_RETRY_LIMIT 10
@@ -171,7 +171,7 @@ public:
 	BOOL LoggingEnabled;
 	BOOL _HistoryTrackingEnabled;
 	BOOL AlreadyRunning;
-	int _RestoreRetryDelaySeconds;
+	int _RestoreRetryDelayMs;
 	int _RestoreRetryLimit;
 	int _RestoreRetryCount;
 	BOOL _AwaitingRestoreRetry;

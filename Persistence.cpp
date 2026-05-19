@@ -163,7 +163,7 @@ void SetAutostart(BOOL enable)
 }
 
 void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingEnabled,
-	int restoreRetryDelaySeconds, int restoreRetryLimit, BOOL historyTrackingEnabled)
+	int restoreRetryDelayMs, int restoreRetryLimit, BOOL historyTrackingEnabled)
 {
 	HKEY hKey;
 	LONG status = RegCreateKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, NULL,
@@ -184,11 +184,11 @@ void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingE
 	status = RegSetValueEx(hKey, _T("LoggingEnabled"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
 	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx LoggingEnabled"), status);
-	val = (DWORD)ClampSettingInt(restoreRetryDelaySeconds,
-		MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS);
-	status = RegSetValueEx(hKey, _T("RestoreRetryDelaySeconds"), 0, REG_DWORD,
+	val = (DWORD)ClampSettingInt(restoreRetryDelayMs,
+		MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS);
+	status = RegSetValueEx(hKey, _T("RestoreRetryDelayMs"), 0, REG_DWORD,
 		reinterpret_cast<const BYTE*>(&val), sizeof(val));
-	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreRetryDelaySeconds"), status);
+	if (status != ERROR_SUCCESS) LogWin32Error(_T("WARNING"), _T("RegSetValueEx RestoreRetryDelayMs"), status);
 	val = (DWORD)ClampSettingInt(restoreRetryLimit,
 		MIN_RESTORE_RETRY_LIMIT, MAX_RESTORE_RETRY_LIMIT);
 	status = RegSetValueEx(hKey, _T("RestoreRetryLimit"), 0, REG_DWORD,
@@ -202,7 +202,7 @@ void SaveSettings(BOOL restoreOnDisconnect, BOOL persistPositions, BOOL loggingE
 }
 
 void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggingEnabled,
-	int& restoreRetryDelaySeconds, int& restoreRetryLimit, BOOL& historyTrackingEnabled)
+	int& restoreRetryDelayMs, int& restoreRetryLimit, BOOL& historyTrackingEnabled)
 {
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
@@ -232,10 +232,20 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
 		loggingEnabled = val ? TRUE : FALSE;
 	size = sizeof(val);
-	if (RegQueryValueEx(hKey, _T("RestoreRetryDelaySeconds"), NULL, NULL,
+	if (RegQueryValueEx(hKey, _T("RestoreRetryDelayMs"), NULL, NULL,
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
-		restoreRetryDelaySeconds = ClampSettingInt((int)val,
-			MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS);
+		restoreRetryDelayMs = ClampSettingInt((int)val,
+			MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS);
+	}
+	else {
+		size = sizeof(val);
+		if (RegQueryValueEx(hKey, _T("RestoreRetryDelaySeconds"), NULL, NULL,
+			reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+			ULONGLONG legacyDelayMs = (ULONGLONG)val * 1000ULL;
+			restoreRetryDelayMs = ClampSettingInt(
+				legacyDelayMs > (ULONGLONG)INT_MAX ? INT_MAX : (int)legacyDelayMs,
+				MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS);
+		}
 	}
 	size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("RestoreRetryLimit"), NULL, NULL,

@@ -67,7 +67,7 @@ static void SaveCurrentSettings()
 	SaveSettings(inst.RestoreOnDisconnect,
 		inst.PersistPositions,
 		inst.LoggingEnabled,
-		inst._RestoreRetryDelaySeconds,
+		inst._RestoreRetryDelayMs,
 		inst._RestoreRetryLimit,
 		inst._HistoryTrackingEnabled);
 }
@@ -101,7 +101,7 @@ static void SyncSettingsControlsFromState()
 	SetCheckboxValue(inst._hSettingsPersistCheck, inst.PersistPositions);
 	SetCheckboxValue(inst._hSettingsLoggingCheck, inst.LoggingEnabled);
 	SetCheckboxValue(inst._hSettingsHistoryCheck, inst._HistoryTrackingEnabled);
-	SetIntegerControlValue(inst._hSettingsDelayEdit, inst._RestoreRetryDelaySeconds);
+	SetIntegerControlValue(inst._hSettingsDelayEdit, inst._RestoreRetryDelayMs);
 	SetIntegerControlValue(inst._hSettingsRetryEdit, inst._RestoreRetryLimit);
 }
 
@@ -135,10 +135,10 @@ static void ApplySettingsFromControls(HWND hWnd)
 		return;
 	}
 
-	int delaySeconds = inst._RestoreRetryDelaySeconds;
+	int delayMs = inst._RestoreRetryDelayMs;
 	int retryLimit = inst._RestoreRetryLimit;
 	if (!TryReadSettingsInteger(hWnd, inst._hSettingsDelayEdit, _T("Restore verification delay"),
-		MIN_RESTORE_RETRY_DELAY_SECONDS, MAX_RESTORE_RETRY_DELAY_SECONDS, &delaySeconds)) {
+		MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS, &delayMs)) {
 		return;
 	}
 	if (!TryReadSettingsInteger(hWnd, inst._hSettingsRetryEdit, _T("Retry count"),
@@ -164,7 +164,7 @@ static void ApplySettingsFromControls(HWND hWnd)
 		inst.PersistPositions != newPersistPositions ||
 		inst.LoggingEnabled != newLoggingEnabled ||
 		inst._HistoryTrackingEnabled != newHistoryTrackingEnabled ||
-		inst._RestoreRetryDelaySeconds != delaySeconds ||
+		inst._RestoreRetryDelayMs != delayMs ||
 		inst._RestoreRetryLimit != retryLimit;
 	if (!changed) {
 		SyncSettingsControlsFromState();
@@ -173,13 +173,13 @@ static void ApplySettingsFromControls(HWND hWnd)
 
 	TCHAR summary[512];
 	StringCchPrintf(summary, _countof(summary),
-		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, window history=%s, retry delay=%d s, retry limit=%d"),
+		_T("Settings applied: restore-on-disconnect=%s, autostart=%s, same-session disk recovery=%s, logging=%s, window history=%s, retry delay=%d ms, retry limit=%d"),
 		newRestoreOnDisconnect ? _T("ON") : _T("OFF"),
 		newAutostart ? _T("ON") : _T("OFF"),
 		newPersistPositions ? _T("ON") : _T("OFF"),
 		newLoggingEnabled ? _T("ON") : _T("OFF"),
 		newHistoryTrackingEnabled ? _T("ON") : _T("OFF"),
-		delaySeconds,
+		delayMs,
 		retryLimit);
 
 	if (oldLoggingEnabled && !newLoggingEnabled) {
@@ -188,7 +188,7 @@ static void ApplySettingsFromControls(HWND hWnd)
 
 	inst.RestoreOnDisconnect = newRestoreOnDisconnect;
 	inst.PersistPositions = newPersistPositions;
-	inst._RestoreRetryDelaySeconds = delaySeconds;
+	inst._RestoreRetryDelayMs = delayMs;
 	inst._RestoreRetryLimit = retryLimit;
 	inst._HistoryTrackingEnabled = newHistoryTrackingEnabled;
 	if (oldAutostart != newAutostart) {
@@ -562,11 +562,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		4, STATUS_HEIGHT + 232, 690, 20,
 		hWnd, (HMENU)IDC_SETTINGS_HISTORY_CHECK, hInstance, NULL);
 	InstanceData::g_Instance._hSettingsDelayLabel = CreateWindowEx(0, _T("STATIC"),
-		_T("Restore verification delay (seconds):"),
+		_T("Restore verification delay (ms):"),
 		WS_CHILD,
 		4, STATUS_HEIGHT + 260, 240, 20,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_LABEL, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsDelayEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("2"),
+	InstanceData::g_Instance._hSettingsDelayEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("2000"),
 		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
 		248, STATUS_HEIGHT + 256, 64, 24,
 		hWnd, (HMENU)IDC_SETTINGS_DELAY_EDIT, hInstance, NULL);
@@ -688,7 +688,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	LoadSettings(InstanceData::g_Instance.RestoreOnDisconnect,
 		InstanceData::g_Instance.PersistPositions,
 		InstanceData::g_Instance.LoggingEnabled,
-		InstanceData::g_Instance._RestoreRetryDelaySeconds,
+		InstanceData::g_Instance._RestoreRetryDelayMs,
 		InstanceData::g_Instance._RestoreRetryLimit,
 		InstanceData::g_Instance._HistoryTrackingEnabled);
 	SyncSettingsControlsFromState();
