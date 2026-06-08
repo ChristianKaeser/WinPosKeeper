@@ -8,6 +8,46 @@
 
 #include <commdlg.h>
 
+static int GetActiveConfigIdForLog()
+{
+	auto& inst = InstanceData::g_Instance;
+	UINT64 configHash = inst._ConfigHash;
+	if (configHash == 0 || inst.InChangingState) {
+		UINT64 liveHash = ComputeMonitorConfigHash();
+		if (liveHash != 0) {
+			configHash = liveHash;
+		}
+	}
+	if (configHash == 0) {
+		return 0;
+	}
+	return inst.GetOrCreateConfigId(configHash);
+}
+
+static void FormatConfigTag(int configId, TCHAR* buffer, size_t cchBuffer)
+{
+	if (configId > 0) {
+		StringCchPrintf(buffer, cchBuffer, _T("[cfg #%d]"), configId);
+	}
+	else {
+		StringCchCopy(buffer, cchBuffer, _T("[cfg n/a]"));
+	}
+}
+
+static std::basic_string<TCHAR> PrefixDetailWithConfigId(int configId, LPCTSTR detail)
+{
+	std::basic_string<TCHAR> text;
+	if (configId > 0) {
+		TCHAR prefix[32];
+		StringCchPrintf(prefix, _countof(prefix), _T("[cfg #%d] "), configId);
+		text = prefix;
+	}
+	if (detail != NULL) {
+		text.append(detail);
+	}
+	return text;
+}
+
 BOOL ShouldLogEvents()
 {
 	auto& inst = InstanceData::g_Instance;
@@ -128,6 +168,7 @@ static void AppendHistoryLogEvent(LPCTSTR type, LPCTSTR detail, const FILETIME& 
 
 	HistoryLogEntry entry;
 	entry.recordedUtc = recordedUtc;
+	entry.configId = GetActiveConfigIdForLog();
 	entry.sequence = ++inst._HistoryNextSequence;
 	entry.type = type != NULL ? type : _T("");
 	entry.detail = detail != NULL ? detail : _T("");
@@ -150,9 +191,12 @@ void LogEvent(LPCTSTR type, LPCTSTR detail)
 
 	SYSTEMTIME st;
 	GetLocalTime(&st);
+	int configId = GetActiveConfigIdForLog();
+	TCHAR configTag[32];
+	FormatConfigTag(configId, configTag, _countof(configTag));
 	TCHAR buf[1024];
-	StringCchPrintf(buf, _countof(buf), _T("%02d:%02d:%02d [%-7s] %s"),
-		st.wHour, st.wMinute, st.wSecond, type, detail);
+	StringCchPrintf(buf, _countof(buf), _T("%02d:%02d:%02d [%-7s] %-11s %s"),
+		st.wHour, st.wMinute, st.wSecond, type, configTag, detail);
 
 	HWND hList = InstanceData::g_Instance._hLogList;
 	if (!hList) return;
@@ -845,7 +889,7 @@ static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
 		row.hasPlacement = entry.hasPlacement;
 		row.showCmd = entry.showCmd;
 		row.source = entry.source;
-		row.detail = entry.detail;
+		row.detail = PrefixDetailWithConfigId(entry.configId, entry.detail.c_str());
 		row.windowTitle = entry.windowTitle;
 		rows.push_back(row);
 	}
@@ -862,7 +906,7 @@ static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
 		row.showCmd = SW_HIDE;
 		row.source = _T("app:");
 		row.source.append(entry.type);
-		row.detail = entry.detail;
+		row.detail = PrefixDetailWithConfigId(entry.configId, entry.detail.c_str());
 		rows.push_back(row);
 	}
 

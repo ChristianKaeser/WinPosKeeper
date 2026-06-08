@@ -44,6 +44,7 @@ struct WindowHistoryEntry {
 	RECT rect;
 	int showCmd;
 	BOOL hasPlacement;
+	int configId;
 	ULONGLONG sequence;
 	std::basic_string<TCHAR> source;
 	std::basic_string<TCHAR> detail;
@@ -54,6 +55,7 @@ struct WindowHistoryEntry {
 
 struct HistoryLogEntry {
 	FILETIME recordedUtc;
+	int configId;
 	ULONGLONG sequence;
 	std::basic_string<TCHAR> type;
 	std::basic_string<TCHAR> detail;
@@ -74,6 +76,7 @@ struct WindowHistoryData {
 	WINDOWPLACEMENT pendingPlacement;
 	FILETIME pendingRecordedUtc;
 	BOOL hasPendingPlacement;
+	int pendingConfigId;
 	std::basic_string<TCHAR> windowClass;
 	std::basic_string<TCHAR> processPath;
 	std::basic_string<TCHAR> latestTitle;

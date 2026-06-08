@@ -88,12 +88,14 @@ WindowHistoryEntry::WindowHistoryEntry()
 	SetRectEmpty(&rect);
 	showCmd = SW_SHOWNORMAL;
 	hasPlacement = FALSE;
+	configId = 0;
 	sequence = 0;
 }
 
 HistoryLogEntry::HistoryLogEntry()
 {
 	ZeroMemory(&recordedUtc, sizeof(recordedUtc));
+	configId = 0;
 	sequence = 0;
 }
 
@@ -111,6 +113,23 @@ WindowHistoryData::WindowHistoryData()
 	ZeroMemory(&pendingPlacement, sizeof(pendingPlacement));
 	ZeroMemory(&pendingRecordedUtc, sizeof(pendingRecordedUtc));
 	hasPendingPlacement = FALSE;
+	pendingConfigId = 0;
+}
+
+static int GetActiveConfigIdForHistory()
+{
+	auto& inst = InstanceData::g_Instance;
+	UINT64 configHash = inst._ConfigHash;
+	if (configHash == 0 || inst.InChangingState) {
+		UINT64 liveHash = ComputeMonitorConfigHash();
+		if (liveHash != 0) {
+			configHash = liveHash;
+		}
+	}
+	if (configHash == 0) {
+		return 0;
+	}
+	return inst.GetOrCreateConfigId(configHash);
 }
 
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
@@ -574,7 +593,7 @@ static WindowHistoryData& GetOrCreateWindowHistory(HWND hwnd, DWORD processId,
 }
 
 static void AppendWindowHistoryEntry(WindowHistoryData& history, const WINDOWPLACEMENT& placement,
-	LPCTSTR source, LPCTSTR detail, LPCTSTR windowTitle, const FILETIME* recordedUtc = NULL)
+	LPCTSTR source, LPCTSTR detail, LPCTSTR windowTitle, int configId = 0, const FILETIME* recordedUtc = NULL)
 {
 	WindowHistoryEntry entry;
 	if (recordedUtc != NULL) {
@@ -586,6 +605,7 @@ static void AppendWindowHistoryEntry(WindowHistoryData& history, const WINDOWPLA
 	entry.rect = placement.rcNormalPosition;
 	entry.showCmd = placement.showCmd;
 	entry.hasPlacement = TRUE;
+	entry.configId = configId > 0 ? configId : GetActiveConfigIdForHistory();
 	entry.sequence = NextHistorySequence();
 	entry.source = source != NULL ? source : _T("");
 	entry.detail = detail != NULL ? detail : _T("location change");
@@ -650,6 +670,7 @@ static void ClearPendingWindowHistory(WindowHistoryData& history)
 	history.pendingSource.clear();
 	history.pendingDetail.clear();
 	history.pendingWindowTitle.clear();
+	history.pendingConfigId = 0;
 }
 
 static BOOL IsWindowHistoryRateLimited(const WindowHistoryData& history, ULONGLONG nowTick)
@@ -684,6 +705,7 @@ static BOOL FlushPendingWindowHistoryEntry(WindowHistoryData& history, ULONGLONG
 		history.pendingSource.c_str(),
 		history.pendingDetail.c_str(),
 		history.pendingWindowTitle.c_str(),
+		history.pendingConfigId,
 		&history.pendingRecordedUtc);
 	ClearPendingWindowHistory(history);
 	history.rateLimitUntilTick = 0;
@@ -864,11 +886,12 @@ static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTS
 
 	LPCTSTR resolvedSource = ResolveWindowHistorySource(*history, sourceOverride);
 	LPCTSTR resolvedDetail = (detail != NULL && detail[0] != '\0') ? detail : _T("location change");
+	int currentConfigId = GetActiveConfigIdForHistory();
 	ULONGLONG nowTick = GetTickCount64();
 	if (forceCapture) {
 		history->rateLimitUntilTick = 0;
 		ClearPendingWindowHistory(*history);
-		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle);
+		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle, currentConfigId);
 		ScheduleWindowHistoryFlushTimer();
 		RefreshWindowHistoryInspector();
 		return;
@@ -877,7 +900,7 @@ static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTS
 	if (!history->inSizeMove) {
 		history->rateLimitUntilTick = 0;
 		ClearPendingWindowHistory(*history);
-		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle);
+		AppendWindowHistoryEntry(*history, placement, resolvedSource, resolvedDetail, windowTitle, currentConfigId);
 		ScheduleWindowHistoryFlushTimer();
 		RefreshWindowHistoryInspector();
 		return;
@@ -889,6 +912,7 @@ static void RecordWindowHistorySnapshot(HWND hwnd, LPCTSTR sourceOverride, LPCTS
 	history->pendingSource = resolvedSource;
 	history->pendingDetail = resolvedDetail;
 	history->pendingWindowTitle = windowTitle;
+	history->pendingConfigId = currentConfigId;
 	if (!IsWindowHistoryRateLimited(*history, nowTick)) {
 		history->rateLimitUntilTick = nowTick + HISTORY_SIZEMOVE_RATE_LIMIT_WINDOW_MS;
 	}
@@ -916,10 +940,12 @@ static void RecordWindowHistoryMarker(HWND hwnd, LPCTSTR sourceOverride, LPCTSTR
 	}
 
 	LPCTSTR resolvedSource = ResolveWindowHistorySource(*history, sourceOverride);
+	int currentConfigId = GetActiveConfigIdForHistory();
 	AppendWindowHistoryEntry(*history, placement,
 		resolvedSource,
 		(detail != NULL && detail[0] != '\0') ? detail : _T("window event"),
-		windowTitle);
+		windowTitle,
+		currentConfigId);
 	ScheduleWindowHistoryFlushTimer();
 	RefreshWindowHistoryInspector();
 }
