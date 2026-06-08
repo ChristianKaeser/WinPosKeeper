@@ -14,6 +14,106 @@ BOOL ShouldLogEvents()
 	return inst.LoggingEnabled || inst._HistoryTrackingEnabled;
 }
 
+static BOOL GetStartupDiagnosticsPath(TCHAR* path, size_t cchPath)
+{
+	if (path == NULL || cchPath == 0) {
+		return FALSE;
+	}
+
+	if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+		return FALSE;
+	}
+	if (FAILED(StringCchCat(path, cchPath, _T("\\WinPosKeeper")))) {
+		return FALSE;
+	}
+	CreateDirectory(path, NULL);
+	return SUCCEEDED(StringCchCat(path, cchPath, _T("\\startup-errors.log"))) ? TRUE : FALSE;
+}
+
+static void AppendStartupDiagnosticsLine(LPCTSTR line)
+{
+	if (line == NULL || line[0] == '\0') {
+		return;
+	}
+
+	TCHAR path[MAX_PATH];
+	if (!GetStartupDiagnosticsPath(path, _countof(path))) {
+		return;
+	}
+
+	HANDLE hFile = CreateFile(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return;
+	}
+
+	LARGE_INTEGER fileSize = {};
+	if (GetFileSizeEx(hFile, &fileSize) && fileSize.QuadPart == 0) {
+#ifdef UNICODE
+		WCHAR bom = 0xFEFF;
+		DWORD written = 0;
+		WriteFile(hFile, &bom, sizeof(bom), &written, NULL);
+#endif
+	}
+
+	static const TCHAR kLineBreak[] = _T("\r\n");
+	DWORD written = 0;
+	WriteFile(hFile, line, (DWORD)(lstrlen(line) * sizeof(TCHAR)), &written, NULL);
+	WriteFile(hFile, kLineBreak, (DWORD)(lstrlen(kLineBreak) * sizeof(TCHAR)), &written, NULL);
+	CloseHandle(hFile);
+}
+
+void ResetStartupDiagnostics()
+{
+	TCHAR path[MAX_PATH];
+	if (GetStartupDiagnosticsPath(path, _countof(path))) {
+		DeleteFile(path);
+	}
+}
+
+void ReportStartupFailure(LPCTSTR context, DWORD error, LPCTSTR detail)
+{
+	SYSTEMTIME st = {};
+	GetLocalTime(&st);
+
+	TCHAR line[1024];
+	if (error != ERROR_SUCCESS) {
+		TCHAR errorText[256];
+		FormatWin32Error(error, errorText, _countof(errorText));
+		StringCchPrintf(line, _countof(line),
+			_T("%04d-%02d-%02d %02d:%02d:%02d startup failure: %s failed: %s (%lu)%s%s"),
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+			context != NULL ? context : _T("startup"), errorText, error,
+			detail != NULL && detail[0] != '\0' ? _T(". ") : _T(""),
+			detail != NULL ? detail : _T(""));
+	}
+	else {
+		StringCchPrintf(line, _countof(line),
+			_T("%04d-%02d-%02d %02d:%02d:%02d startup failure: %s%s%s"),
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+			context != NULL ? context : _T("startup"),
+			detail != NULL && detail[0] != '\0' ? _T(". ") : _T(""),
+			detail != NULL ? detail : _T(""));
+	}
+
+	AppendStartupDiagnosticsLine(line);
+	OutputDebugString(line);
+	OutputDebugString(_T("\r\n"));
+
+	TCHAR path[MAX_PATH];
+	TCHAR message[1400];
+	if (GetStartupDiagnosticsPath(path, _countof(path))) {
+		StringCchPrintf(message, _countof(message),
+			_T("%s\r\n\r\nDetails were written to:\r\n%s"), line, path);
+	}
+	else {
+		StringCchCopy(message, _countof(message), line);
+	}
+
+	MessageBox(NULL, message, _T("WinPosKeeper Startup Failure"),
+		MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL);
+}
+
 static ULONGLONG FileTimeToUInt64ForSort(const FILETIME& value)
 {
 	ULARGE_INTEGER result = {};

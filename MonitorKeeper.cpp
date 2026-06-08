@@ -7,6 +7,7 @@
 
 #include "AppState.h"
 
+#include "LoggingUI.h"
 #include "TrayUI.h"
 
 HINSTANCE hInst = NULL;
@@ -23,14 +24,34 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 {
 	UNREFERENCED_PARAMETER(hPrevInstance);
 	UNREFERENCED_PARAMETER(lpCmdLine);
+	ResetStartupDiagnostics();
 
 	if (InstanceData::g_Instance.AlreadyRunning) {
+		ReportStartupFailure(_T("Single-instance startup guard"), ERROR_ALREADY_EXISTS,
+			_T("Another WinPosKeeper instance is already running."));
 		return FALSE;
 	}
 
-	LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
-	LoadStringW(hInstance, IDC_MONITORKEEPER, szWindowClass, MAX_LOADSTRING);
-	MyRegisterClass(hInstance);
+	if (LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING) == 0) {
+		DWORD error = GetLastError();
+		ReportStartupFailure(_T("LoadStringW(IDS_APP_TITLE)"),
+			error != ERROR_SUCCESS ? error : ERROR_RESOURCE_NAME_NOT_FOUND,
+			_T("Could not load the application title resource."));
+		return FALSE;
+	}
+	if (LoadStringW(hInstance, IDC_MONITORKEEPER, szWindowClass, MAX_LOADSTRING) == 0) {
+		DWORD error = GetLastError();
+		ReportStartupFailure(_T("LoadStringW(IDC_MONITORKEEPER)"),
+			error != ERROR_SUCCESS ? error : ERROR_RESOURCE_NAME_NOT_FOUND,
+			_T("Could not load the main window class name resource."));
+		return FALSE;
+	}
+	if (MyRegisterClass(hInstance) == 0) {
+		DWORD error = GetLastError();
+		ReportStartupFailure(_T("RegisterClassExW"), error,
+			_T("The main window class could not be registered."));
+		return FALSE;
+	}
 
 	if (!InitInstance(hInstance, nCmdShow))
 	{

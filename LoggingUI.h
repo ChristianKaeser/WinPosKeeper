@@ -3,6 +3,8 @@
 #include "MonitorKeeper.h"
 
 BOOL ShouldLogEvents();
+void ResetStartupDiagnostics();
+void ReportStartupFailure(LPCTSTR context, DWORD error, LPCTSTR detail);
 void LogEvent(LPCTSTR type, LPCTSTR detail);
 void LogEventFormat(LPCTSTR type, LPCTSTR format, ...);
 void UpdateLoggingUiState();

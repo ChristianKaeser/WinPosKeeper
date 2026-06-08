@@ -523,137 +523,191 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	INITCOMMONCONTROLSEX icex = {};
 	icex.dwSize = sizeof(icex);
 	icex.dwICC = ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
-	InitCommonControlsEx(&icex);
+	if (!InitCommonControlsEx(&icex)) {
+		DWORD error = GetLastError();
+		ReportStartupFailure(_T("InitCommonControlsEx"), error,
+			_T("Standard and tab controls could not be initialized."));
+		return FALSE;
+	}
 
 	HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
 		CW_USEDEFAULT, 0, 700, 500, nullptr, nullptr, hInstance, nullptr);
 	if (!hWnd)
 	{
+		ReportStartupFailure(_T("CreateWindowW(main window)"), GetLastError(),
+			_T("The main hidden window could not be created."));
 		return FALSE;
 	}
 
 	InstanceData::g_Instance._MainWnd = hWnd;
+	auto createRequiredChild = [hWnd, hInstance](HWND& target, DWORD exStyle, LPCTSTR className,
+		LPCTSTR windowText, DWORD style, int x, int y, int width, int height,
+		HMENU menu, LPCTSTR controlName) -> BOOL {
+		target = CreateWindowEx(exStyle, className, windowText, style,
+			x, y, width, height, hWnd, menu, hInstance, NULL);
+		if (target != NULL) {
+			return TRUE;
+		}
+
+		DWORD error = GetLastError();
+		TCHAR detail[256];
+		StringCchPrintf(detail, _countof(detail), _T("Failed to create %s."),
+			controlName != NULL ? controlName : className);
+		ReportStartupFailure(_T("CreateWindowEx(child control)"), error, detail);
+		return FALSE;
+	};
+
 	ShowStartupSplash(hInstance);
 	if (g_hStartupSplash != NULL) {
 		SetTimer(hWnd, STARTUP_SPLASH_TIMER_ID, STARTUP_SPLASH_MS, NULL);
 	}
-	InstanceData::g_Instance._hMainTab = CreateWindowEx(0, WC_TABCONTROL, _T(""),
+	if (!createRequiredChild(InstanceData::g_Instance._hMainTab, 0, WC_TABCONTROL, _T(""),
 		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 		4, STATUS_HEIGHT + 8, 690, 400,
-		hWnd, (HMENU)IDC_MAIN_TAB, hInstance, NULL);
-	InstanceData::g_Instance._hStatus = CreateWindowEx(0, _T("STATIC"), _T(""),
+		(HMENU)IDC_MAIN_TAB, _T("main tab control"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hStatus, 0, _T("STATIC"), _T(""),
 		WS_CHILD | WS_VISIBLE | SS_LEFT,
 		4, 4, 646, STATUS_HEIGHT,
-		hWnd, NULL, hInstance, NULL);
-	InstanceData::g_Instance._hStatusIcon = CreateWindowEx(0, _T("STATIC"), NULL,
+		NULL, _T("status label"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hStatusIcon, 0, _T("STATIC"), NULL,
 		WS_CHILD | WS_VISIBLE | SS_ICON | SS_CENTERIMAGE,
 		654, 4, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
-		hWnd, NULL, hInstance, NULL);
-	InstanceData::g_Instance._hLogList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		NULL, _T("status icon"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hLogList, WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
 		LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		4, STATUS_HEIGHT + 8, 690, 400,
-		hWnd, NULL, hInstance, NULL);
-	InstanceData::g_Instance._hConfigList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		NULL, _T("log list"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hConfigList, WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		4, STATUS_HEIGHT + 8, 220, 400,
-		hWnd, (HMENU)IDC_CONFIG_LIST, hInstance, NULL);
-	InstanceData::g_Instance._hConfigSummary = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		(HMENU)IDC_CONFIG_LIST, _T("layout config list"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hConfigSummary, WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
 		232, STATUS_HEIGHT + 8, 462, 92,
-		hWnd, (HMENU)IDC_CONFIG_SUMMARY, hInstance, NULL);
-	InstanceData::g_Instance._hPlacementList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		(HMENU)IDC_CONFIG_SUMMARY, _T("layout config summary"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hPlacementList, WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		232, STATUS_HEIGHT + 108, 462, 296,
-		hWnd, (HMENU)IDC_PLACEMENT_LIST, hInstance, NULL);
-	InstanceData::g_Instance._hReadmeView = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		(HMENU)IDC_PLACEMENT_LIST, _T("placement list"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hReadmeView, WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
 		4, STATUS_HEIGHT + 8, 690, 400,
-		hWnd, (HMENU)IDC_README_VIEW, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsIntro = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"),
+		(HMENU)IDC_README_VIEW, _T("README view"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsIntro, WS_EX_CLIENTEDGE, _T("EDIT"),
 		_T("The tray/menu toggles are mirrored here together with the restore verification timing.\r\n\r\n")
 		_T("Verification delay is the pause before each full verification pass. Additional verification passes controls how many extra full recheck/reapply cycles can run after the initial restore. Windows that enter size/move are skipped for the remaining passes.\r\n\r\n")
 		_T("Disk persistence only keeps same-session restart recovery data for still-running windows. Window history keeps an in-memory HWND timeline and can export merged TSV diagnostics."),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
 		4, STATUS_HEIGHT + 8, 690, 120,
-		hWnd, (HMENU)IDC_SETTINGS_INTRO, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsRestoreCheck = CreateWindowEx(0, _T("BUTTON"),
+		(HMENU)IDC_SETTINGS_INTRO, _T("settings intro text"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsRestoreCheck, 0, _T("BUTTON"),
 		_T("Allow restore attempts when the monitor count drops (disconnect / undock)"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 136, 690, 20,
-		hWnd, (HMENU)IDC_SETTINGS_RESTORE_CHECK, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsAutostartCheck = CreateWindowEx(0, _T("BUTTON"),
+		(HMENU)IDC_SETTINGS_RESTORE_CHECK, _T("restore-on-disconnect checkbox"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsAutostartCheck, 0, _T("BUTTON"),
 		_T("Start WinPosKeeper with Windows"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 160, 690, 20,
-		hWnd, (HMENU)IDC_SETTINGS_AUTOSTART_CHECK, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsPersistCheck = CreateWindowEx(0, _T("BUTTON"),
+		(HMENU)IDC_SETTINGS_AUTOSTART_CHECK, _T("autostart checkbox"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsPersistCheck, 0, _T("BUTTON"),
 		_T("Keep same-session restart recovery data on disk for app restarts"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 184, 690, 20,
-		hWnd, (HMENU)IDC_SETTINGS_PERSIST_CHECK, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsLoggingCheck = CreateWindowEx(0, _T("BUTTON"),
+		(HMENU)IDC_SETTINGS_PERSIST_CHECK, _T("disk persistence checkbox"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsLoggingCheck, 0, _T("BUTTON"),
 		_T("Keep diagnostic messages in the Log tab"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 208, 690, 20,
-		hWnd, (HMENU)IDC_SETTINGS_LOGGING_CHECK, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsHistoryCheck = CreateWindowEx(0, _T("BUTTON"),
+		(HMENU)IDC_SETTINGS_LOGGING_CHECK, _T("logging checkbox"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsHistoryCheck, 0, _T("BUTTON"),
 		_T("Keep in-memory window history and enable TSV export for investigation"),
 		WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX,
 		4, STATUS_HEIGHT + 232, 690, 20,
-		hWnd, (HMENU)IDC_SETTINGS_HISTORY_CHECK, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsDelayLabel = CreateWindowEx(0, _T("STATIC"),
+		(HMENU)IDC_SETTINGS_HISTORY_CHECK, _T("history checkbox"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsDelayLabel, 0, _T("STATIC"),
 		_T("Verification pass delay (ms):"),
 		WS_CHILD,
 		4, STATUS_HEIGHT + 260, 240, 20,
-		hWnd, (HMENU)IDC_SETTINGS_DELAY_LABEL, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsDelayEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("2000"),
+		(HMENU)IDC_SETTINGS_DELAY_LABEL, _T("verification delay label"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsDelayEdit, WS_EX_CLIENTEDGE, _T("EDIT"), _T("2000"),
 		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
 		248, STATUS_HEIGHT + 256, 64, 24,
-		hWnd, (HMENU)IDC_SETTINGS_DELAY_EDIT, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsRetryLabel = CreateWindowEx(0, _T("STATIC"),
+		(HMENU)IDC_SETTINGS_DELAY_EDIT, _T("verification delay edit"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsRetryLabel, 0, _T("STATIC"),
 		_T("Additional full verification passes:"),
 		WS_CHILD,
 		4, STATUS_HEIGHT + 288, 240, 20,
-		hWnd, (HMENU)IDC_SETTINGS_RETRY_LABEL, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsRetryEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T("4"),
+		(HMENU)IDC_SETTINGS_RETRY_LABEL, _T("retry count label"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsRetryEdit, WS_EX_CLIENTEDGE, _T("EDIT"), _T("4"),
 		WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
 		248, STATUS_HEIGHT + 284, 64, 24,
-		hWnd, (HMENU)IDC_SETTINGS_RETRY_EDIT, hInstance, NULL);
-	InstanceData::g_Instance._hSettingsApplyButton = CreateWindowEx(0, _T("BUTTON"), _T("Apply Settings"),
+		(HMENU)IDC_SETTINGS_RETRY_EDIT, _T("retry count edit"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hSettingsApplyButton, 0, _T("BUTTON"), _T("Apply Settings"),
 		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
 		4, STATUS_HEIGHT + 316, 132, 28,
-		hWnd, (HMENU)IDC_SETTINGS_APPLY, hInstance, NULL);
-	InstanceData::g_Instance._hHistoryWindowList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		(HMENU)IDC_SETTINGS_APPLY, _T("settings apply button"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hHistoryWindowList, WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		4, STATUS_HEIGHT + 8, 690, 96,
-		hWnd, (HMENU)IDC_HISTORY_WINDOW_LIST, hInstance, NULL);
-	InstanceData::g_Instance._hHistorySummary = CreateWindowEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
+		(HMENU)IDC_HISTORY_WINDOW_LIST, _T("history window list"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hHistorySummary, WS_EX_CLIENTEDGE, _T("EDIT"), _T(""),
 		WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
 		4, STATUS_HEIGHT + 112, 690, 110,
-		hWnd, (HMENU)IDC_HISTORY_SUMMARY, hInstance, NULL);
-	InstanceData::g_Instance._hHistoryExportButton = CreateWindowEx(0, _T("BUTTON"), _T("Export TSV..."),
+		(HMENU)IDC_HISTORY_SUMMARY, _T("history summary"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hHistoryExportButton, 0, _T("BUTTON"), _T("Export TSV..."),
 		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
 		4, STATUS_HEIGHT + 230, 132, 28,
-		hWnd, (HMENU)IDC_HISTORY_EXPORT, hInstance, NULL);
-	InstanceData::g_Instance._hHistoryTimelineList = CreateWindowEx(WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
+		(HMENU)IDC_HISTORY_EXPORT, _T("history export button"))) {
+		return FALSE;
+	}
+	if (!createRequiredChild(InstanceData::g_Instance._hHistoryTimelineList, WS_EX_CLIENTEDGE, _T("LISTBOX"), _T(""),
 		WS_CHILD | WS_VSCROLL | WS_HSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | LBS_HASSTRINGS,
 		4, STATUS_HEIGHT + 266, 690, 200,
-		hWnd, (HMENU)IDC_HISTORY_TIMELINE_LIST, hInstance, NULL);
-
-	if (InstanceData::g_Instance._hMainTab == NULL || InstanceData::g_Instance._hStatus == NULL ||
-		InstanceData::g_Instance._hStatusIcon == NULL || InstanceData::g_Instance._hLogList == NULL ||
-		InstanceData::g_Instance._hConfigList == NULL || InstanceData::g_Instance._hConfigSummary == NULL ||
-		InstanceData::g_Instance._hPlacementList == NULL || InstanceData::g_Instance._hReadmeView == NULL ||
-		InstanceData::g_Instance._hSettingsIntro == NULL || InstanceData::g_Instance._hSettingsRestoreCheck == NULL ||
-		InstanceData::g_Instance._hSettingsAutostartCheck == NULL || InstanceData::g_Instance._hSettingsPersistCheck == NULL ||
-		InstanceData::g_Instance._hSettingsLoggingCheck == NULL || InstanceData::g_Instance._hSettingsHistoryCheck == NULL ||
-		InstanceData::g_Instance._hSettingsDelayLabel == NULL ||
-		InstanceData::g_Instance._hSettingsDelayEdit == NULL || InstanceData::g_Instance._hSettingsRetryLabel == NULL ||
-		InstanceData::g_Instance._hSettingsRetryEdit == NULL || InstanceData::g_Instance._hSettingsApplyButton == NULL ||
-		InstanceData::g_Instance._hHistoryWindowList == NULL || InstanceData::g_Instance._hHistorySummary == NULL ||
-		InstanceData::g_Instance._hHistoryExportButton == NULL || InstanceData::g_Instance._hHistoryTimelineList == NULL) {
-		LogWin32Error(_T("ERROR"), _T("CreateWindowEx for main window child controls"), GetLastError());
+		(HMENU)IDC_HISTORY_TIMELINE_LIST, _T("history timeline list"))) {
 		return FALSE;
 	}
 
