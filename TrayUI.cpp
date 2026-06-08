@@ -25,6 +25,25 @@ static const UINT_PTR STARTUP_SPLASH_TIMER_ID = 6;
 static const UINT STARTUP_SPLASH_MS = 2000;
 static HWND g_hStartupSplash = NULL;
 
+static void InitializeCommonControlsBestEffort()
+{
+	HMODULE commonControls = LoadLibrary(_T("comctl32.dll"));
+	INITCOMMONCONTROLSEX icex = {};
+	icex.dwSize = sizeof(icex);
+	icex.dwICC = ICC_WIN95_CLASSES;
+	if (!InitCommonControlsEx(&icex)) {
+		INITCOMMONCONTROLSEX fallback = {};
+		fallback.dwSize = sizeof(fallback);
+		fallback.dwICC = ICC_TAB_CLASSES;
+		if (!InitCommonControlsEx(&fallback)) {
+			InitCommonControls();
+		}
+	}
+	if (commonControls != NULL) {
+		FreeLibrary(commonControls);
+	}
+}
+
 static int GetSelectedMainTab()
 {
 	HWND hTab = InstanceData::g_Instance._hMainTab;
@@ -522,13 +541,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 	INITCOMMONCONTROLSEX icex = {};
 	icex.dwSize = sizeof(icex);
-	icex.dwICC = ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
-	if (!InitCommonControlsEx(&icex)) {
-		DWORD error = GetLastError();
-		ReportStartupFailure(_T("InitCommonControlsEx"), error,
-			_T("Standard and tab controls could not be initialized."));
-		return FALSE;
-	}
+	icex.dwICC = ICC_WIN95_CLASSES;
+	InitializeCommonControlsBestEffort();
 
 	HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW & ~WS_VISIBLE,
 		CW_USEDEFAULT, 0, 700, 500, nullptr, nullptr, hInstance, nullptr);

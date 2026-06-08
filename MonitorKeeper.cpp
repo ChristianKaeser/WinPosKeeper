@@ -27,8 +27,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	ResetStartupDiagnostics();
 
 	if (InstanceData::g_Instance.AlreadyRunning) {
-		ReportStartupFailure(_T("Single-instance startup guard"), ERROR_ALREADY_EXISTS,
-			_T("Another WinPosKeeper instance is already running."));
+		ReportStartupFailure(_T("Single-instance startup guard"), ERROR_SUCCESS,
+			_T("Another WinPosKeeper instance is already running. Use the tray icon or exit the existing instance first."));
 		return FALSE;
 	}
 
