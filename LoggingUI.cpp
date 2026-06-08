@@ -20,14 +20,11 @@ static BOOL GetStartupDiagnosticsPath(TCHAR* path, size_t cchPath)
 		return FALSE;
 	}
 
-	if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+	DWORD length = GetTempPath((DWORD)cchPath, path);
+	if (length == 0 || length >= cchPath) {
 		return FALSE;
 	}
-	if (FAILED(StringCchCat(path, cchPath, _T("\\WinPosKeeper")))) {
-		return FALSE;
-	}
-	CreateDirectory(path, NULL);
-	return SUCCEEDED(StringCchCat(path, cchPath, _T("\\startup-errors.log"))) ? TRUE : FALSE;
+	return SUCCEEDED(StringCchCat(path, cchPath, _T("WinPosKeeper-startup-errors.log"))) ? TRUE : FALSE;
 }
 
 static void AppendStartupDiagnosticsLine(LPCTSTR line)
