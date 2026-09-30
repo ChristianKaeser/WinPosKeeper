@@ -417,6 +417,19 @@ void InstanceData::TagWindowsUnused()
 	}
 }
 
+void InstanceData::ReleaseClosedWindowSlots()
+{
+	// A destroyed window can never be restored or persisted again, and its HWND value may later
+	// be handed to an unrelated window, so free the record instead of keeping it forever.
+	for (auto& wd : _WindowData)
+	{
+		if (wd.m_hwnd != NULL && !IsWindow(wd.m_hwnd))
+		{
+			wd = SavedWindowData();
+		}
+	}
+}
+
 int InstanceData::CountTrackedWindows() const
 {
 	int trackedWindows = 0;
@@ -1270,6 +1283,7 @@ void ProcessDesktopWindows()
 	}
 	PurgeClosedWindowHistoryEntriesInternal(FALSE);
 	FlushPendingWindowHistoryEntriesInternal(FALSE);
+	InstanceData::g_Instance.ReleaseClosedWindowSlots();
 	InstanceData::g_Instance.TagWindowsUnused();
 	int savedCount = 0;
 	EnumDesktopWindows(NULL, SaveWindowsCallback, (LPARAM)&savedCount);

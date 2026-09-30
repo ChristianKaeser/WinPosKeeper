@@ -115,6 +115,7 @@ public:
 
 	void Shutdown();
 	void TagWindowsUnused();
+	void ReleaseClosedWindowSlots();
 	int CountTrackedWindows() const;
 	int CountSavedWindowRecords() const;
 	int CountTotalPlacements() const;
