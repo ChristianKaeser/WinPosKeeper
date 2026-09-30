@@ -196,7 +196,7 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	actual.length = sizeof(WINDOWPLACEMENT);
 	if (GetWindowPlacement(m_hwnd, &actual)) {
 		haveActualPlacement = TRUE;
-		if (!WindowPlacementNeedsRestore(it->second, actual)) {
+		if (!WindowPlacementNeedsRestore(m_hwnd, it->second, actual)) {
 			return FALSE;
 		}
 	}
@@ -1177,6 +1177,34 @@ BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPL
 		abs(expected.rcNormalPosition.bottom - actual.rcNormalPosition.bottom) > PLACEMENT_TOLERANCE;
 }
 
+static BOOL MaximizedPlacementUsesWrongMonitor(HWND hwnd, const WINDOWPLACEMENT& expected)
+{
+	if (hwnd == NULL || ClassifyShowCommandForRestore(expected.showCmd) != RestoreShowCommandMaximized) {
+		return FALSE;
+	}
+
+	HMONITOR expectedMonitor = MonitorFromRect(&expected.rcNormalPosition, MONITOR_DEFAULTTONEAREST);
+	HMONITOR actualMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+	if (expectedMonitor == NULL || actualMonitor == NULL) {
+		return FALSE;
+	}
+
+	MONITORINFO expectedInfo = {};
+	MONITORINFO actualInfo = {};
+	expectedInfo.cbSize = sizeof(expectedInfo);
+	actualInfo.cbSize = sizeof(actualInfo);
+	if (!GetMonitorInfo(expectedMonitor, &expectedInfo) || !GetMonitorInfo(actualMonitor, &actualInfo)) {
+		return FALSE;
+	}
+
+	return !EqualRect(&expectedInfo.rcMonitor, &actualInfo.rcMonitor);
+}
+
+BOOL WindowPlacementNeedsRestore(HWND hwnd, const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual)
+{
+	return WindowPlacementNeedsRestore(expected, actual) || MaximizedPlacementUsesWrongMonitor(hwnd, expected);
+}
+
 BOOL CALLBACK SaveWindowsCallback(HWND hwnd, LPARAM lParam)
 {
 	UINT64 configHash = InstanceData::g_Instance._ConfigHash;
@@ -1299,7 +1327,7 @@ void RetryPendingRestores()
 		}
 
 		checkedCount++;
-		if (!WindowPlacementNeedsRestore(it->second, actual)) {
+		if (!WindowPlacementNeedsRestore(wd.m_hwnd, it->second, actual)) {
 			continue;
 		}
 
@@ -1387,19 +1415,21 @@ void VerifyRestoredWindows()
 		int dy = abs(expected.top - got.top);
 		int dw = abs((expected.right - expected.left) - (got.right - got.left));
 		int dh = abs((expected.bottom - expected.top) - (got.bottom - got.top));
+		BOOL monitorMismatch = MaximizedPlacementUsesWrongMonitor(wd.m_hwnd, it->second);
 
-		if (dx > PLACEMENT_TOLERANCE || dy > PLACEMENT_TOLERANCE ||
+		if (monitorMismatch || dx > PLACEMENT_TOLERANCE || dy > PLACEMENT_TOLERANCE ||
 			dw > PLACEMENT_TOLERANCE || dh > PLACEMENT_TOLERANCE) {
 			TCHAR identity[512];
 			TCHAR sz[1024];
 			FormatWindowIdentity(wd.m_hwnd, wd.m_processId, wd.m_wndClass, wd.m_processPath, wd.m_windowTitle, identity, _countof(identity));
 			StringCchPrintf(sz, _countof(sz),
-				_T("%s: expected (%d,%d %dx%d) got (%d,%d %dx%d)"),
+				_T("%s: expected (%d,%d %dx%d) got (%d,%d %dx%d)%s"),
 				identity,
 				expected.left, expected.top,
 				expected.right - expected.left, expected.bottom - expected.top,
 				got.left, got.top,
-				got.right - got.left, got.bottom - got.top);
+				got.right - got.left, got.bottom - got.top,
+				monitorMismatch ? _T("; maximized on a different monitor") : _T(""));
 			mismatchCount++;
 			wd.m_retryPending = TRUE;
 			mismatchDetails.push_back(sz);

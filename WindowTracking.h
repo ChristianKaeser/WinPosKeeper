@@ -7,6 +7,7 @@ void FormatWindowIdentity(HWND hwnd, DWORD fallbackProcessId, LPCTSTR fallbackCl
 	LPCTSTR fallbackWindowTitle, TCHAR* buffer, size_t cchBuffer);
 int NormalizeShowCommandForCompare(int showCmd);
 BOOL WindowPlacementNeedsRestore(const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual);
+BOOL WindowPlacementNeedsRestore(HWND hwnd, const WINDOWPLACEMENT& expected, const WINDOWPLACEMENT& actual);
 BOOL CALLBACK SaveWindowsCallback(HWND hwnd, LPARAM lParam);
 void ProcessDesktopWindows();
 VOID CALLBACK SaveTimerCallback(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime);
