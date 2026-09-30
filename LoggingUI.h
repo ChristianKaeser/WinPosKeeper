@@ -21,7 +21,8 @@ HICON LoadAppIcon(HINSTANCE instance, BOOL isSmall);
 std::basic_string<TCHAR> GetLogEntryText(HWND hList, int index);
 std::basic_string<TCHAR> GetAllLogText(HWND hList);
 BOOL CopyTextToClipboard(HWND hWndOwner, const std::basic_string<TCHAR>& text);
-void ShowLogContextMenu(HWND hWnd, int x, int y);
+HWND GetContextMenuTarget();
+void ShowListContextMenu(HWND hWndOwner, HWND hList, int x, int y);
 
 #define LOG_EVENT(type, text) \
 	do { \

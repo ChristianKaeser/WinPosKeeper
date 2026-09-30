@@ -8,6 +8,8 @@
 
 #include <commdlg.h>
 
+static HWND g_hContextMenuTarget = NULL;
+
 static int GetActiveConfigIdForLog()
 {
 	auto& inst = InstanceData::g_Instance;
@@ -380,12 +382,17 @@ BOOL CopyTextToClipboard(HWND hWndOwner, const std::basic_string<TCHAR>& text)
 	return TRUE;
 }
 
-void ShowLogContextMenu(HWND hWnd, int x, int y)
+HWND GetContextMenuTarget()
 {
-	HWND hList = InstanceData::g_Instance._hLogList;
+	return g_hContextMenuTarget != NULL ? g_hContextMenuTarget : InstanceData::g_Instance._hLogList;
+}
+
+void ShowListContextMenu(HWND hWndOwner, HWND hList, int x, int y)
+{
 	if (hList == NULL) {
 		return;
 	}
+	g_hContextMenuTarget = hList;
 
 	if (x == -1 || y == -1) {
 		RECT rect;
@@ -408,10 +415,14 @@ void ShowLogContextMenu(HWND hWnd, int x, int y)
 		return;
 	}
 
+	BOOL isHistoryList = hList == InstanceData::g_Instance._hHistoryWindowList ||
+		hList == InstanceData::g_Instance._hHistoryTimelineList;
+	BOOL canClear = hList == InstanceData::g_Instance._hLogList || isHistoryList;
+
 	AppendMenu(menu, MF_STRING, IDM_COPY_LOG_ENTRY, _T("Copy Entry"));
 	AppendMenu(menu, MF_STRING, IDM_COPY_ALL_LOG, _T("Copy All"));
 	AppendMenu(menu, MF_SEPARATOR, 0, NULL);
-	AppendMenu(menu, MF_STRING, IDM_CLEAR_LOG, _T("Clear Log"));
+	AppendMenu(menu, MF_STRING, IDM_CLEAR_LOG, isHistoryList ? _T("Clear History") : _T("Clear Log"));
 
 	int count = (int)SendMessage(hList, LB_GETCOUNT, 0, 0);
 	int current = (int)SendMessage(hList, LB_GETCURSEL, 0, 0);
@@ -423,11 +434,21 @@ void ShowLogContextMenu(HWND hWnd, int x, int y)
 	else if (current == LB_ERR) {
 		EnableMenuItem(menu, IDM_COPY_LOG_ENTRY, MF_BYCOMMAND | MF_GRAYED);
 	}
+	if (!canClear) {
+		EnableMenuItem(menu, IDM_CLEAR_LOG, MF_BYCOMMAND | MF_GRAYED);
+	}
 
-	SetForegroundWindow(hWnd);
-	TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, 0, hWnd, NULL);
+	// TPM_RETURNCMD lets the command run while g_hContextMenuTarget still names this list.
+	// Without it the WM_COMMAND is posted and handled after the target has been reset.
+	SetForegroundWindow(hWndOwner);
+	UINT command = (UINT)TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+		x, y, 0, hWndOwner, NULL);
 	DestroyMenu(menu);
-	PostMessage(hWnd, WM_NULL, 0, 0);
+	PostMessage(hWndOwner, WM_NULL, 0, 0);
+	if (command != 0) {
+		SendMessage(hWndOwner, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+	}
+	g_hContextMenuTarget = NULL;
 }
 
 static void CaptureInspectorSelection()

@@ -966,21 +966,31 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				UpdateStatusPanel();
 				break;
 			case IDM_CLEAR_LOG:
-				SendMessage(InstanceData::g_Instance._hLogList, LB_RESETCONTENT, 0, 0);
-				LOG_EVENT(_T("INFO"), _T("Log cleared"));
+				{
+					HWND target = GetContextMenuTarget();
+					if (target == InstanceData::g_Instance._hLogList) {
+						SendMessage(target, LB_RESETCONTENT, 0, 0);
+						LOG_EVENT(_T("INFO"), _T("Log cleared"));
+					}
+					else if (target == InstanceData::g_Instance._hHistoryWindowList ||
+						target == InstanceData::g_Instance._hHistoryTimelineList) {
+						ClearWindowHistoryTracking();
+					}
+				}
 				break;
 			case IDM_COPY_LOG_ENTRY:
 				{
-					int index = (int)SendMessage(InstanceData::g_Instance._hLogList, LB_GETCURSEL, 0, 0);
+					HWND target = GetContextMenuTarget();
+					int index = (int)SendMessage(target, LB_GETCURSEL, 0, 0);
 					if (index == LB_ERR) {
-						LOG_EVENT(_T("WARNING"), _T("Copy Entry requested with no selected log row"));
+						LOG_EVENT(_T("WARNING"), _T("Copy Entry requested with no selected row"));
 						break;
 					}
-					CopyTextToClipboard(hWnd, GetLogEntryText(InstanceData::g_Instance._hLogList, index));
+					CopyTextToClipboard(hWnd, GetLogEntryText(target, index));
 				}
 				break;
 			case IDM_COPY_ALL_LOG:
-				CopyTextToClipboard(hWnd, GetAllLogText(InstanceData::g_Instance._hLogList));
+				CopyTextToClipboard(hWnd, GetAllLogText(GetContextMenuTarget()));
 				break;
 			default:
 				return DefWindowProc(hWnd, message, wParam, lParam);
@@ -997,8 +1007,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		ShowWindow(hWnd, SW_HIDE);
 		return 0;
 	case WM_CONTEXTMENU:
-		if ((HWND)wParam == InstanceData::g_Instance._hLogList) {
-			ShowLogContextMenu(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+		if ((HWND)wParam == InstanceData::g_Instance._hLogList ||
+			(HWND)wParam == InstanceData::g_Instance._hConfigList ||
+			(HWND)wParam == InstanceData::g_Instance._hPlacementList ||
+			(HWND)wParam == InstanceData::g_Instance._hHistoryWindowList ||
+			(HWND)wParam == InstanceData::g_Instance._hHistoryTimelineList) {
+			ShowListContextMenu(hWnd, (HWND)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
 			return 0;
 		}
 		break;
