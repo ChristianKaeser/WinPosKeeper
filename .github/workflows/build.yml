@@ -110,9 +110,14 @@ jobs:
           gh attestation verify WinPosKeeper-x64.exe --repo ${GITHUB_REPOSITORY}
           \`\`\`
           NOTES
-          gh release create "$TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "WinPosKeeper ${TAG#v}" \
-            --notes-file notes.md \
-            --generate-notes \
-            --verify-tag
+          # A release drafted in the GitHub UI already exists; just attach the files.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "WinPosKeeper ${TAG#v}" \
+              --notes-file notes.md \
+              --generate-notes \
+              --verify-tag
+          fi
