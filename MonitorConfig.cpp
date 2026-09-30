@@ -206,8 +206,6 @@ VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK hWinEventHook, DWORD dwEvent, H
 	LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
 {
 	UNREFERENCED_PARAMETER(hWinEventHook);
-	UNREFERENCED_PARAMETER(idObject);
-	UNREFERENCED_PARAMETER(idChild);
 	UNREFERENCED_PARAMETER(dwEventThread);
 	UNREFERENCED_PARAMETER(dwmsEventTime);
 	if (hwnd == NULL) {
@@ -228,6 +226,11 @@ VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK hWinEventHook, DWORD dwEvent, H
 
 	if (dwEvent == EVENT_OBJECT_LOCATIONCHANGE)
 	{
+		// Only top-level window moves matter. Carets, cursors and child controls fire this event
+		// constantly and would otherwise keep restarting the capture timer.
+		if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || GetAncestor(hwnd, GA_ROOT) != hwnd) {
+			return;
+		}
 		if (InstanceData::g_Instance._HistoryTrackingEnabled) {
 			CaptureWindowHistoryEvent(hwnd, NULL, _T("WM_WINDOWPOSCHANGED"), FALSE);
 		}
