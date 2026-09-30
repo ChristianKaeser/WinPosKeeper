@@ -15,7 +15,9 @@ jobs:
     # windows-latest ships Visual Studio 2026, which has no v143 toolset.
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Check that the tag matches the version resource
         if: startsWith(github.ref, 'refs/tags/v')
@@ -37,6 +39,12 @@ jobs:
             exit /b 1
           )
 
+      - name: Report compiler warnings
+        shell: pwsh
+        run: |
+          Select-String build_log.txt -Pattern 'Warning\(s\)|Error\(s\)' | ForEach-Object { $_.Line.Trim() }
+          Select-String build_log.txt -Pattern ': warning ' | ForEach-Object { "::warning::$($_.Line.Trim())" }
+
       - name: Collect release files
         shell: pwsh
         run: |
@@ -52,13 +60,13 @@ jobs:
           Get-Content SHA256SUMS.txt
           Pop-Location
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: WinPosKeeper
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: WinPosKeeper-symbols
           path: symbols/
@@ -73,12 +81,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: WinPosKeeper
           path: dist
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*.exe
 
