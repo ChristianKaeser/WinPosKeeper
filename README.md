@@ -1,145 +1,108 @@
 # WinPosKeeper
 
-Automatically restores window positions when your monitor or desktop configuration changes.
+Puts your windows back where they were when a monitor comes back.
 
-WinPosKeeper is a continuation of the original MonitorKeeper project by Garr Godfrey.
+Windows 10 re-packs all open windows onto the remaining screens whenever a display disappears, and it does not move them back when the display returns. This can happen very frequently with **DisplayPort** / **USB-C** connected monitors: many of them drop their hot-plug signal when they go into standby, are switched off, or switch to another input. Windows treats that exactly like the cable being pulled and rearranges the whole desktop.
 
-Original Author: Garr Godfrey
+WinPosKeeper runs in the system tray, remembers window positions separately for each monitor arrangement, and restores them automatically when that arrangement is back.
 
-2026 Modifications: Christian Kaser
+It is aimed at setups where monitors come and go often: monitors that sleep or get switched off, docking and undocking, KVM switches, and multi-monitor desks with DisplayPort connections.
 
-License: MIT
+## Platform
 
-## What it does
+- Built and tested on **Windows 10** (22H2) only.
+- **Windows 11** has a comparable built-in option (Settings > System > Display > Multiple displays > "Remember window locations based on monitor connection"). WinPosKeeper has not been tested there and may not be needed.
+- Single portable `.exe`, no installer, no runtime dependencies, no network access.
 
-When a monitor is disconnected, powered off, or switched away, Windows usually repacks top-level windows onto the remaining desktop area. When that layout later comes back, WinPosKeeper re-applies the saved positions for that specific monitor arrangement.
+## Getting started
 
-The app does not only look at the monitor count. It hashes the current monitor layout from the device names and monitor rectangles, so different two-monitor arrangements are treated as different saved layouts.
+1. Download `WinPosKeeper.exe` from the Releases page (use the x64 build on 64-bit Windows).
+2. Put it somewhere permanent, for example `%LOCALAPPDATA%\Programs\WinPosKeeper\`, and run it.
+3. The executable is not code-signed, so Windows SmartScreen may warn on first launch ("More info" > "Run anyway").
+4. Right-click the tray icon and enable **Start with Windows** if you want it running all the time.
 
-## Core concepts
+That's it. Arrange your windows, and the next time a monitor drops out and comes back, WinPosKeeper moves them back.
 
-The app uses a few terms repeatedly in the UI and log.
+Starting the exe again while it is already running just opens the existing window.
 
-Saved layout: a monitor configuration identified by a 64-bit hash. Each saved layout can have its own saved window placements.
+## How it behaves
 
-Window record: one tracked window identity in memory. While the app is running, the strong key is the live `HWND` plus the owning process ID and window class. The stored process path and title are kept for diagnostics only. Each window record can carry up to `MAX_CONFIGSLOTS` saved placements across different layouts.
+- **Saving:** about one second after windows stop moving, WinPosKeeper records the position, size and show state (normal, minimized, maximized) of every visible top-level application window under the current monitor layout.
+- **Layouts:** a layout is identified by the position and resolution of every connected monitor. Different arrangements of the same monitors, or a changed resolution, count as different layouts. Each window keeps its placements for up to 16 layouts; the least recently seen layouts are dropped first.
+- **Restoring:** after a display change settles (2 seconds), WinPosKeeper applies the saved placements for the new layout, then re-checks and re-applies them a few times, because some applications move themselves again after being restored. A window you move by hand during this phase is left alone.
+- **Locked screen:** display changes that happen while the session is locked are handled after you unlock.
+- **Monitor disconnects:** by default positions are also restored when a monitor goes away (so windows go back to where you had them on the smaller layout). Turn off "Also restore positions when monitors disconnect" to let Windows' own re-packing stand in that case.
 
-Saved placement: one `WINDOWPLACEMENT` value for one window record under one saved layout. This is the actual rectangle and show-state that can be restored later.
-
-Full snapshot: a capture pass taken while a saved layout is active. A snapshot stores when that layout was last seen, how many visible top-level windows were captured during that pass, and the monitor arrangement itself.
-
-Open tracked window: a window record that is currently matched to a live top-level window handle in the running session. In the Layouts tab, `open` means the app currently sees that window; `saved` means only the stored record remains.
-
-## Features
-
-- Automatic save and restore of window positions per saved layout
-- Optional same-session restart recovery in `%APPDATA%\WinPosKeeper\positions.dat`
-- Optional autostart via the tray menu
-- Optional restore when monitors disconnect
-- Built-in diagnostics through the Log, Layouts, and README tabs
-- Per-monitor DPI aware manifest
-- Tray icon recovery after Explorer restarts
-
-## Using the app
-
-WinPosKeeper runs in the system tray. Right-click the tray icon for options:
+## Tray menu
 
 | Menu item | Description |
 |-----------|-------------|
+| Show Window... | Open the main window (clicking the tray icon does the same) |
 | About | Version information |
-| Show Window | Open the main status window |
-| Also restore positions when monitors disconnect | Re-apply saved placements when a monitor disappears |
-| Start with Windows | Toggle autostart at logon |
-| Persist Positions to Disk | Save and reload placements if WinPosKeeper itself restarts during the same Windows session |
-| Enable Event Logging | Toggle the on-screen log |
-| Exit | Quit the app |
+| Also restore positions when monitors disconnect | Restore saved placements when the monitor count drops (default: on) |
+| Start with Windows | Start WinPosKeeper at logon (default: off) |
+| Persist Positions to Disk | Keep data on disk so a restart of WinPosKeeper itself doesn't lose it (default: off, see below) |
+| Enable Event Logging | Show events in the Log tab (default: on) |
+| Exit | Quit WinPosKeeper |
 
-The Layouts tab is intended as a diagnostic view.
+## Main window
 
-The selector at the top shows each saved layout with these fields:
+- **Log:** what WinPosKeeper did and why: display changes, restores, verification passes and warnings. Right-click to copy or clear.
+- **Layouts:** every monitor layout seen so far, and for the selected layout the saved placement of each window. `open` rows are windows that currently exist; `saved` rows are windows that are not visible right now (hidden, or closed since the last capture).
+- **README:** this file.
+- **Settings:** the tray options, plus:
+  - *Verification pass delay* (100-30000 ms, default 2000): the pause before each check that restored windows are where they should be.
+  - *Additional full verification passes* (0-10, default 4): how many times mismatched windows are re-applied.
+  - *Window history* (default: off): keeps an in-memory timeline of every position change per window, for diagnosing applications that fight the restore. Shown in the History tab.
+- **History:** the per-window timeline, merged with the log events that concern that window. **Export** writes it as a TSV file.
 
-- Layout ID: the short sequential number shown in the UI.
-- `current` or `saved`: whether that saved layout matches the desktop right now.
-- `placements=`: how many saved placements currently exist for that layout.
-- `snapshot=`: how many visible top-level windows were captured during the last full snapshot while that layout was active.
-- `last=`: when that layout was last fully captured.
-- Monitor summary: the saved monitor arrangement for that layout.
+## Where data is stored
 
-The detail pane below explains the currently selected saved layout:
+- Settings: registry, `HKEY_CURRENT_USER\Software\WinPosKeeper`
+- Autostart: registry value `WinPosKeeper` under `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`
+- Saved positions: in memory; with "Persist Positions to Disk" also in `%APPDATA%\WinPosKeeper\positions.dat` (written every 5 minutes and on exit)
+- Startup problems: `%TEMP%\WinPosKeeper-startup-errors.log`, only written if the app fails to start
 
-- Saved placements: current count of stored `WINDOWPLACEMENT` records for that layout.
-- Last full snapshot: how many windows were actually seen during the last full capture pass for that layout.
-- Snapshot time: when that full capture happened.
-- Monitor layout: the saved monitor arrangement for that layout. Older persisted files may not have this data until that layout is seen again.
+Nothing is sent anywhere. `positions.dat` holds window handles, process IDs, window classes, rectangles and monitor names, but no window titles. The Log and History tabs, clipboard copies and History exports do contain window titles and executable paths, so check them before sharing.
 
-The placement list uses these row states:
+## Uninstalling
 
-- `open`: the record is currently attached to a live window handle in this session.
-- `saved`: the record still has saved placements, but the app does not currently see a matching live window.
+1. Turn off **Start with Windows** (or delete the `WinPosKeeper` value under the Run key above) and exit the app.
+2. Delete the `.exe`.
+3. Optionally delete `HKEY_CURRENT_USER\Software\WinPosKeeper` and `%APPDATA%\WinPosKeeper`.
 
-The README tab shows this file from an embedded resource so deployment stays a single standalone `.exe`.
+## Limitations
 
-## Persistence format
-
-When disk persistence is enabled, the app writes `%APPDATA%\WinPosKeeper\positions.dat`.
-
-The current file format is a simple binary format with a version magic followed by two tables:
-
-1. Saved layout snapshots.
-2. Window records and their saved placements.
-
-Each saved layout snapshot stores:
-
-- Layout hash
-- Last snapshot time
-- Last full-snapshot window count
-- Saved monitor layout list, including monitor rectangles, device names, and friendly names
-
-Each persisted window record stores:
-
-- A boot/session marker in the file header to prove the file belongs to the current Windows session
-- The live `HWND` value
-- The owning process ID
-- The window class
-- A list of saved placements keyed by layout hash
-
-Each saved placement stores the raw Win32 `WINDOWPLACEMENT` structure for one window record under one saved layout.
-
-Persisted records are only accepted if all of these still match when the app starts again:
-
-- The file was written during the current Windows boot and logon session.
-- The saved `HWND` still exists.
-- The saved process ID still owns that `HWND`.
-- The saved window class still matches.
-
-If any of those checks fail, the persisted record is ignored rather than guessed back onto a different window.
-
-## Persistence limitations
-
-- Disk persistence is intentionally conservative. It is meant to recover from WinPosKeeper itself restarting during the same Windows session, not to carry exact window identity safely across a reboot or after target applications have been closed and restarted.
-- `HWND` values are only stable while the target window continues to exist. If a target application recreates its window or restarts, the persisted record will be discarded.
-- Older persisted files from earlier heuristic formats are intentionally ignored because they cannot be matched back strongly enough.
-- Only the newest `MAX_CONFIGSLOTS` layouts are kept per window record. Very old layouts are pruned per window record, not globally.
-
-## Runtime limitations
-
-- Only visible top-level windows that look like normal application windows are captured.
-- Elevated windows cannot usually be moved by a non-elevated instance of the app.
-- Some applications overwrite their own window position after the app restores them, which is why the app verifies and retries restores.
-- A saved layout can legitimately show fewer saved placements than the current number of open tracked windows if some windows were opened after that layout was last active.
+- Windows are identified by their live window handle. That is exact, but it means positions only apply to windows that stay open: a window that is closed and reopened starts fresh, and nothing carries over a reboot.
+- "Persist Positions to Disk" is intentionally conservative. It only restores data written during the same Windows boot and logon session, and only for windows that still exist with the same process and window class. It covers WinPosKeeper itself restarting (update, crash), not a reboot.
+- Only visible top-level application windows are tracked; tool windows and popups are ignored.
+- Windows of elevated (administrator) applications cannot be moved unless WinPosKeeper also runs elevated.
+- Some applications reposition themselves after being restored. WinPosKeeper retries, but can lose that fight.
+- Two monitor setups with exactly the same geometry are treated as the same layout.
 
 ## Building
 
-Run `build.bat` from a command prompt. It uses `vswhere` to find Visual Studio, writes the full output to `build_log.txt`, and now also prints the final MSBuild exit code directly in the console.
+Requirements: Visual Studio 2022 (or its Build Tools) with the "Desktop development with C++" workload and a Windows 10/11 SDK.
 
-Requirements: Visual Studio 2022 with the Desktop development with C++ workload.
+- `build.bat` builds Release for Win32 and x64; `build.bat x64` or `build.bat Win32` builds one. `build.sh` does the same from Git Bash.
+- Output: `Release\x64\WinPosKeeper.exe` and `Release\Win32\WinPosKeeper.exe`. Full MSBuild output goes to `build_log.txt`.
+- Or open `WinPosKeeper.vcxproj` in Visual Studio.
 
-Output: `Release\Win32\WinPosKeeper.exe`
+The executables link the C runtime statically, so they run without the Visual C++ Redistributable. The README is embedded as a resource, so the `.exe` is all you need to ship.
 
-## Quick test
+## Persistence file format
 
-1. Connect two monitors and place some windows across both.
-2. Start WinPosKeeper.
-3. Change the layout so Windows moves everything onto one display.
-4. Restore the original monitor layout.
-5. Confirm the windows return to their saved positions.
+For the curious; the format may change between versions, and files from other versions are ignored.
+
+`positions.dat` starts with a format magic, a boot-time marker and the Windows session ID, followed by two tables:
+
+1. Layout snapshots: layout hash, time of the last full capture, number of windows captured, and the monitor list (rectangles, device names, friendly names).
+2. Window records: window handle, process ID, window class, and the saved `WINDOWPLACEMENT` per layout hash.
+
+A record is only loaded if the file belongs to the current boot and session, and the window handle still exists with the same process ID and window class.
+
+## Credits and license
+
+WinPosKeeper is a continuation of [MonitorKeeper](https://github.com/hunkydoryrepair/MonitorKeeper) by Garr Godfrey, reworked and extended in 2026 by Christian Käser.
+
+MIT License, see [LICENSE](LICENSE).
