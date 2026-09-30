@@ -1,0 +1,110 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # windows-latest ships Visual Studio 2026, which has no v143 toolset.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check that the tag matches the version resource
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $rc = Get-Content WinPosKeeper.rc -Raw
+          if ($rc -notmatch 'FILEVERSION (\d+),(\d+),(\d+),\d+') { throw 'FILEVERSION not found in WinPosKeeper.rc' }
+          $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            throw "Tag ${{ github.ref_name }} does not match FILEVERSION $version in WinPosKeeper.rc"
+          }
+
+      - name: Build Win32 and x64
+        shell: cmd
+        run: |
+          call build.bat
+          if errorlevel 1 (
+            type build_log.txt
+            exit /b 1
+          )
+
+      - name: Collect release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist, symbols | Out-Null
+          Copy-Item Release\x64\WinPosKeeper.exe dist\WinPosKeeper-x64.exe
+          Copy-Item Release\Win32\WinPosKeeper.exe dist\WinPosKeeper-x86.exe
+          Copy-Item Release\x64\WinPosKeeper.pdb symbols\WinPosKeeper-x64.pdb
+          Copy-Item Release\Win32\WinPosKeeper.pdb symbols\WinPosKeeper-x86.pdb
+          Push-Location dist
+          Get-ChildItem *.exe | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
+          Pop-Location
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinPosKeeper
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinPosKeeper-symbols
+          path: symbols/
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: WinPosKeeper
+          path: dist
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.exe
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<NOTES
+          ## Downloads
+
+          - \`WinPosKeeper-x64.exe\`: for 64-bit Windows (almost every PC today)
+          - \`WinPosKeeper-x86.exe\`: for 32-bit Windows
+          - \`SHA256SUMS.txt\`: SHA-256 checksums of both files
+
+          The executables are not code-signed yet, so SmartScreen may warn on first launch ("More info" > "Run anyway").
+
+          They were built by GitHub Actions from the tagged source. To check that a download is unmodified, compare \`Get-FileHash WinPosKeeper-x64.exe\` with \`SHA256SUMS.txt\`, or verify the build provenance with the GitHub CLI:
+
+          \`\`\`
+          gh attestation verify WinPosKeeper-x64.exe --repo ${GITHUB_REPOSITORY}
+          \`\`\`
+          NOTES
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "WinPosKeeper ${TAG#v}" \
+            --notes-file notes.md \
+            --generate-notes \
+            --verify-tag
