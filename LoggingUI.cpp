@@ -878,12 +878,19 @@ static void CollectWindowHistoryKeys(std::vector<UINT_PTR>& hwndValues)
 
 static BOOL ShouldMergeHistoryLogEntryForWindow(const HistoryLogEntry& entry, DWORD processId)
 {
-	if (entry.type == _T("RESTORE") || entry.type == _T("DISK")) {
-		TCHAR pidToken[32];
-		StringCchPrintf(pidToken, _countof(pidToken), _T("pid=%6lu"), processId);
-		return _tcsstr(entry.detail.c_str(), pidToken) != NULL;
+	// Per-window log lines carry a "pid=" identity. Keep the ones for this window's process and
+	// drop lines about other windows so the timeline (and its TSV export) doesn't leak their
+	// titles and paths. General app events without a window identity are kept, except
+	// RESTORE/DISK summaries, which are noise here.
+	TCHAR pidToken[32];
+	StringCchPrintf(pidToken, _countof(pidToken), _T("pid=%6lu"), processId);
+	if (_tcsstr(entry.detail.c_str(), pidToken) != NULL) {
+		return TRUE;
 	}
-	return TRUE;
+	if (_tcsstr(entry.detail.c_str(), _T("pid=")) != NULL) {
+		return FALSE;
+	}
+	return entry.type != _T("RESTORE") && entry.type != _T("DISK");
 }
 
 static void BuildWindowHistoryTimeline(UINT_PTR selectedHwnd,
