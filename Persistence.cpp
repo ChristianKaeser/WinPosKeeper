@@ -7,14 +7,8 @@
 
 #define AUTOSTART_REG_KEY _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define AUTOSTART_VALUE _T("WinPosKeeper")
-#define LEGACY_AUTOSTART_VALUE _T("MonWinPosKeeper")
-#define LEGACY_AUTOSTART_VALUE_V1 _T("MonitorKeeper")
 #define SETTINGS_REG_KEY _T("Software\\WinPosKeeper")
-#define LEGACY_SETTINGS_REG_KEY _T("Software\\MonWinPosKeeper")
-#define LEGACY_SETTINGS_REG_KEY_V1 _T("Software\\MonitorKeeper")
 #define APPDATA_DIR_NAME _T("WinPosKeeper")
-#define LEGACY_APPDATA_DIR_NAME _T("MonWinPosKeeper")
-#define LEGACY_APPDATA_DIR_NAME_V1 _T("MonitorKeeper")
 #define PERSIST_MAGIC_V5 0x4D4B5035
 #define PERSIST_BOOT_MARKER_TOLERANCE_100NS (30ULL * 1000ULL * 1000ULL * 10ULL)
 
@@ -118,9 +112,7 @@ BOOL IsAutostartEnabled()
 	HKEY hKey;
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
 		return FALSE;
-	BOOL exists = (RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) ||
-		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) ||
-		(RegQueryValueEx(hKey, LEGACY_AUTOSTART_VALUE_V1, NULL, NULL, NULL, NULL) == ERROR_SUCCESS);
+	BOOL exists = RegQueryValueEx(hKey, AUTOSTART_VALUE, NULL, NULL, NULL, NULL) == ERROR_SUCCESS;
 	RegCloseKey(hKey);
 	return exists;
 }
@@ -142,21 +134,11 @@ void SetAutostart(BOOL enable)
 		if (status != ERROR_SUCCESS) {
 			LogWin32Error(_T("WARNING"), _T("RegSetValueEx for autostart"), status);
 		}
-		RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
-		RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE_V1);
 	}
 	else {
 		status = RegDeleteValue(hKey, AUTOSTART_VALUE);
 		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
 			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for autostart"), status);
-		}
-		status = RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE);
-		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
-			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for legacy autostart"), status);
-		}
-		status = RegDeleteValue(hKey, LEGACY_AUTOSTART_VALUE_V1);
-		if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
-			LogWin32Error(_T("WARNING"), _T("RegDeleteValue for legacy v1 autostart"), status);
 		}
 	}
 	RegCloseKey(hKey);
@@ -205,24 +187,13 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 	int& restoreRetryDelayMs, int& restoreRetryLimit, BOOL& historyTrackingEnabled)
 {
 	HKEY hKey;
-	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-		if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-			if (RegOpenKeyEx(HKEY_CURRENT_USER, LEGACY_SETTINGS_REG_KEY_V1, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
-				return;
-		}
-	}
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, SETTINGS_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+		return;
 	DWORD val;
 	DWORD size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("RestoreOnDisconnect"), NULL, NULL,
-		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
+		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
 		restoreOnDisconnect = val ? TRUE : FALSE;
-	}
-	else {
-		size = sizeof(val);
-		if (RegQueryValueEx(hKey, _T("SkipSingleMonitor"), NULL, NULL,
-			reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
-			restoreOnDisconnect = val ? FALSE : TRUE;
-	}
 	size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("PersistPositions"), NULL, NULL,
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS)
@@ -236,16 +207,6 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 		reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
 		restoreRetryDelayMs = ClampSettingInt((int)val,
 			MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS);
-	}
-	else {
-		size = sizeof(val);
-		if (RegQueryValueEx(hKey, _T("RestoreRetryDelaySeconds"), NULL, NULL,
-			reinterpret_cast<BYTE*>(&val), &size) == ERROR_SUCCESS) {
-			ULONGLONG legacyDelayMs = (ULONGLONG)val * 1000ULL;
-			restoreRetryDelayMs = ClampSettingInt(
-				legacyDelayMs > (ULONGLONG)INT_MAX ? INT_MAX : (int)legacyDelayMs,
-				MIN_RESTORE_RETRY_DELAY_MS, MAX_RESTORE_RETRY_DELAY_MS);
-		}
 	}
 	size = sizeof(val);
 	if (RegQueryValueEx(hKey, _T("RestoreRetryLimit"), NULL, NULL,
@@ -350,21 +311,7 @@ void InstanceData::LoadFromDisk()
 
 	HANDLE hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
-		if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME, path, MAX_PATH)) {
-			if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME_V1, path, MAX_PATH)) {
-				return;
-			}
-		}
-		hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile == INVALID_HANDLE_VALUE) {
-			if (!GetPersistPathForFolder(LEGACY_APPDATA_DIR_NAME_V1, path, MAX_PATH)) {
-				return;
-			}
-			hFile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (hFile == INVALID_HANDLE_VALUE) {
-				return;
-			}
-		}
+		return;
 	}
 
 	FILETIME lastWriteUtc = {};
