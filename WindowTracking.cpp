@@ -260,6 +260,10 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 		TranslateShowCommand(place.showCmd),
 		identity);
 
+	// Async placement keeps a hung target window from blocking this thread. Both requests are
+	// posted to the target's queue, so the normal-then-maximize order is preserved.
+	place.flags &= ~WPF_SETMINPOSITION;
+	place.flags |= WPF_ASYNCWINDOWPLACEMENT;
 	if (place.showCmd == SW_MAXIMIZE) {
 		place.showCmd = SW_SHOWNOACTIVATE;
 		if (!SetWindowPlacement(m_hwnd, &place)) {
@@ -274,8 +278,6 @@ BOOL SavedWindowData::RestoreWindow(UINT64 configHash)
 	else if (place.showCmd == SW_NORMAL) {
 		place.showCmd = SW_SHOWNOACTIVATE;
 	}
-	place.flags &= ~WPF_SETMINPOSITION;
-	place.flags |= WPF_ASYNCWINDOWPLACEMENT;
 
 	if (!SetWindowPlacement(m_hwnd, &place)) {
 		m_lastRestoreError = GetLastError();
