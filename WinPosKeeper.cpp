@@ -1,6 +1,6 @@
 // WinPosKeeper.cpp
 //
-// Original author: Garr Godfrey
+// Based on MonitorKeeper by Garr Godfrey (https://github.com/hunkydoryrepair/MonitorKeeper).
 // License: MIT License
 //
 // Entry point and shared globals for the WinPosKeeper application.

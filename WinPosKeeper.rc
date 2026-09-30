@@ -22,6 +22,7 @@
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(65001)
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -180,7 +181,7 @@ BEGIN
             VALUE "FileDescription", "Window Position Keeper"
             VALUE "FileVersion", "2.0.0.0"
             VALUE "InternalName", "WinPosKeeper.exe"
-            VALUE "LegalCopyright", "2018-2026"
+            VALUE "LegalCopyright", "Copyright (c) 2018 Garr Godfrey, (c) 2026 Christian Käser. MIT License."
             VALUE "OriginalFilename", "WinPosKeeper.exe"
             VALUE "ProductName", "WinPosKeeper"
             VALUE "ProductVersion", "2.0.0.0"
