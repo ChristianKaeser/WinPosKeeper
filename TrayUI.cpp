@@ -801,7 +801,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		InstanceData::g_Instance._RestoreRetryLimit,
 		InstanceData::g_Instance._HistoryTrackingEnabled);
 	SyncSettingsControlsFromState();
-	InstanceData::g_Instance.LoadFromDisk();
+	if (InstanceData::g_Instance.PersistPositions) {
+		InstanceData::g_Instance.LoadFromDisk();
+	}
 
 	InstanceData::g_Instance._ConfigHash = ComputeMonitorConfigHash();
 	InstanceData::g_Instance._NumMonitors = GetCurrentMonitorCount();

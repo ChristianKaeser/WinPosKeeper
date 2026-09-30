@@ -12,15 +12,11 @@
 #define PERSIST_MAGIC_V5 0x4D4B5035
 #define PERSIST_BOOT_MARKER_TOLERANCE_100NS (30ULL * 1000ULL * 1000ULL * 10ULL)
 
-static BOOL GetPersistPathForFolder(LPCTSTR folderName, TCHAR* path, DWORD cch)
+static BOOL GetPersistFolder(TCHAR* path, DWORD cch)
 {
 	if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path)))
 		return FALSE;
-	StringCchCat(path, cch, _T("\\"));
-	StringCchCat(path, cch, folderName);
-	CreateDirectory(path, NULL);
-	StringCchCat(path, cch, _T("\\positions.dat"));
-	return TRUE;
+	return SUCCEEDED(StringCchCat(path, cch, _T("\\") APPDATA_DIR_NAME)) ? TRUE : FALSE;
 }
 
 static ULONGLONG FileTimeToUInt64(const FILETIME& value)
@@ -233,7 +229,9 @@ void LoadSettings(BOOL& restoreOnDisconnect, BOOL& persistPositions, BOOL& loggi
 
 BOOL InstanceData::GetPersistPath(TCHAR* path, DWORD cch)
 {
-	return GetPersistPathForFolder(APPDATA_DIR_NAME, path, cch);
+	if (!GetPersistFolder(path, cch))
+		return FALSE;
+	return SUCCEEDED(StringCchCat(path, cch, _T("\\positions.dat"))) ? TRUE : FALSE;
 }
 
 BOOL InstanceData::SaveToDisk(LPCTSTR reason)
@@ -241,6 +239,14 @@ BOOL InstanceData::SaveToDisk(LPCTSTR reason)
 	if (!PersistPositions) return FALSE;
 
 	TCHAR path[MAX_PATH];
+	if (!GetPersistFolder(path, MAX_PATH)) {
+		LOG_EVENT(_T("WARNING"), _T("Unable to resolve persistence folder"));
+		return FALSE;
+	}
+	if (!CreateDirectory(path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+		LogWin32Error(_T("WARNING"), _T("CreateDirectory for persistence"), GetLastError());
+		return FALSE;
+	}
 	if (!GetPersistPath(path, MAX_PATH)) {
 		LOG_EVENT(_T("WARNING"), _T("Unable to resolve persistence path"));
 		return FALSE;
