@@ -16,7 +16,7 @@ It is aimed at setups where monitors come and go often: monitors that sleep or g
 
 ## Getting started
 
-1. Download `WinPosKeeper.exe` from the Releases page (use the x64 build on 64-bit Windows).
+1. Download `WinPosKeeper-x64.exe` from the [Releases page](https://github.com/ChristianKaeser/WinPosKeeper/releases) (`WinPosKeeper-x86.exe` is for 32-bit Windows). Rename it to `WinPosKeeper.exe` if you like.
 2. Put it somewhere permanent, for example `%LOCALAPPDATA%\Programs\WinPosKeeper\`, and run it.
 3. The executable is not code-signed, so Windows SmartScreen may warn on first launch ("More info" > "Run anyway").
 4. Right-click the tray icon and enable **Start with Windows** if you want it running all the time.
@@ -87,6 +87,8 @@ Requirements: Visual Studio 2022 (or its Build Tools) with the "Desktop developm
 - `build.bat` builds Release for Win32 and x64; `build.bat x64` or `build.bat Win32` builds one. `build.sh` does the same from Git Bash.
 - Output: `Release\x64\WinPosKeeper.exe` and `Release\Win32\WinPosKeeper.exe`. Full MSBuild output goes to `build_log.txt`.
 - Or open `WinPosKeeper.vcxproj` in Visual Studio.
+
+Release builds are made by the GitHub Actions workflow in `.github/workflows/build.yml`: every push builds both platforms, and pushing a `v*` tag that matches the version resource publishes a release with both executables, `SHA256SUMS.txt` and a build provenance attestation.
 
 The executables link the C runtime statically, so they run without the Visual C++ Redistributable. The README is embedded as a resource, so the `.exe` is all you need to ship.
 
