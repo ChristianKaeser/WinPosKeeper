@@ -132,6 +132,38 @@ static int GetActiveConfigIdForHistory()
 	return inst.GetOrCreateConfigId(configHash);
 }
 
+// Drops the placements whose layout was captured least recently, never the one just written.
+// Layouts without a snapshot record (never fully captured) count as oldest.
+static void PruneOldestPlacements(std::map<UINT64, WINDOWPLACEMENT>& placements, UINT64 keepHash)
+{
+	const auto& snapshots = InstanceData::g_Instance._ConfigSnapshots;
+	while (placements.size() > MAX_CONFIGSLOTS) {
+		auto oldest = placements.end();
+		ULONGLONG oldestTime = 0;
+		for (auto it = placements.begin(); it != placements.end(); ++it) {
+			if (it->first == keepHash) {
+				continue;
+			}
+			ULONGLONG capturedTime = 0;
+			auto snapshot = snapshots.find(it->first);
+			if (snapshot != snapshots.end()) {
+				ULARGE_INTEGER value = {};
+				value.LowPart = snapshot->second.lastSavedUtc.dwLowDateTime;
+				value.HighPart = snapshot->second.lastSavedUtc.dwHighDateTime;
+				capturedTime = value.QuadPart;
+			}
+			if (oldest == placements.end() || capturedTime < oldestTime) {
+				oldest = it;
+				oldestTime = capturedTime;
+			}
+		}
+		if (oldest == placements.end()) {
+			break;
+		}
+		placements.erase(oldest);
+	}
+}
+
 BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
 {
 	m_hwnd = hwnd;
@@ -150,9 +182,7 @@ BOOL SavedWindowData::SetData(HWND hwnd, UINT64 configHash)
 	}
 
 	m_placements[configHash] = wp;
-	while (m_placements.size() > MAX_CONFIGSLOTS) {
-		m_placements.erase(m_placements.begin());
-	}
+	PruneOldestPlacements(m_placements, configHash);
 
 	return TRUE;
 }
