@@ -126,11 +126,20 @@ void SetAutostart(BOOL enable)
 		return;
 	}
 	if (enable) {
+		// Quote the path so the Run entry survives install folders containing spaces.
 		TCHAR exePath[MAX_PATH];
-		GetModuleFileName(NULL, exePath, MAX_PATH);
+		TCHAR command[MAX_PATH + 2];
+		DWORD length = GetModuleFileName(NULL, exePath, MAX_PATH);
+		if (length == 0 || length >= MAX_PATH ||
+			FAILED(StringCchPrintf(command, _countof(command), _T("\"%s\""), exePath))) {
+			LogWin32Error(_T("WARNING"), _T("GetModuleFileName for autostart"),
+				length == 0 ? GetLastError() : ERROR_INSUFFICIENT_BUFFER);
+			RegCloseKey(hKey);
+			return;
+		}
 		status = RegSetValueEx(hKey, AUTOSTART_VALUE, 0, REG_SZ,
-			reinterpret_cast<const BYTE*>(exePath),
-			(DWORD)((lstrlen(exePath) + 1) * sizeof(TCHAR)));
+			reinterpret_cast<const BYTE*>(command),
+			(DWORD)((lstrlen(command) + 1) * sizeof(TCHAR)));
 		if (status != ERROR_SUCCESS) {
 			LogWin32Error(_T("WARNING"), _T("RegSetValueEx for autostart"), status);
 		}
