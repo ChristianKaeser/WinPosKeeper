@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MonitorKeeper.h"
+#include "WinPosKeeper.h"
 
 ATOM MyRegisterClass(HINSTANCE hInstance);
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow);

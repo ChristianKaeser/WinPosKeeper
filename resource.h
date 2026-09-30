@@ -1,20 +1,15 @@
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ generated include file.
-// Used by MonitorKeeper.rc
+// Used by WinPosKeeper.rc
 //
-#define IDC_MYICON                      2
-#define IDD_MONITORKEEPER_DIALOG        102
 #define IDS_APP_TITLE                   103
 #define IDD_ABOUTBOX                    103
 #define IDM_ABOUT                       104
 #define IDM_EXIT                        105
-#define IDI_MONITORKEEPER               107
-#define IDC_MONITORKEEPER               109
-#define IDR_MAINFRAME                   128
+#define IDI_WINPOSKEEPER               107
+#define IDC_WINPOSKEEPER               109
 #define IDR_TRAYMENU                    129
 #define IDR_EMBEDDED_README             130
-#define ID_FILE                         32771
-#define ID_NOTIFY_SHOWWINDOW            32772
 #define IDM_SHOWWINDOW                  32773
 #define IDM_RESTORE_ON_DISCONNECT       32774
 #define IDM_AUTOSTART                   32775

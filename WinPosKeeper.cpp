@@ -1,4 +1,4 @@
-// MonitorKeeper.cpp
+// WinPosKeeper.cpp
 //
 // Original author: Garr Godfrey
 // License: MIT License
@@ -39,9 +39,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			_T("Could not load the application title resource."));
 		return FALSE;
 	}
-	if (LoadStringW(hInstance, IDC_MONITORKEEPER, szWindowClass, MAX_LOADSTRING) == 0) {
+	if (LoadStringW(hInstance, IDC_WINPOSKEEPER, szWindowClass, MAX_LOADSTRING) == 0) {
 		DWORD error = GetLastError();
-		ReportStartupFailure(_T("LoadStringW(IDC_MONITORKEEPER)"),
+		ReportStartupFailure(_T("LoadStringW(IDC_WINPOSKEEPER)"),
 			error != ERROR_SUCCESS ? error : ERROR_RESOURCE_NAME_NOT_FOUND,
 			_T("Could not load the main window class name resource."));
 		return FALSE;
@@ -58,7 +58,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		return FALSE;
 	}
 
-	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_MONITORKEEPER));
+	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_WINPOSKEEPER));
 	MSG msg;
 
 	while (GetMessage(&msg, nullptr, 0, 0))

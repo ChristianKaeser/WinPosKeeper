@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MonitorKeeper.h"
+#include "WinPosKeeper.h"
 
 BOOL ShouldLogEvents();
 void ResetStartupDiagnostics();

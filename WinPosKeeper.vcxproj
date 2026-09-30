@@ -104,7 +104,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Manifest>
-      <AdditionalManifestFiles>MonitorKeeper.manifest</AdditionalManifestFiles>
+      <AdditionalManifestFiles>WinPosKeeper.manifest</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -121,7 +121,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Manifest>
-      <AdditionalManifestFiles>MonitorKeeper.manifest</AdditionalManifestFiles>
+      <AdditionalManifestFiles>WinPosKeeper.manifest</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -144,7 +144,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Manifest>
-      <AdditionalManifestFiles>MonitorKeeper.manifest</AdditionalManifestFiles>
+      <AdditionalManifestFiles>WinPosKeeper.manifest</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -166,14 +166,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Manifest>
-      <AdditionalManifestFiles>MonitorKeeper.manifest</AdditionalManifestFiles>
+      <AdditionalManifestFiles>WinPosKeeper.manifest</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="AppState.h" />
     <ClInclude Include="LoggingUI.h" />
     <ClInclude Include="MonitorConfig.h" />
-    <ClInclude Include="MonitorKeeper.h" />
+    <ClInclude Include="WinPosKeeper.h" />
     <ClInclude Include="Persistence.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="targetver.h" />
@@ -183,19 +183,19 @@
   <ItemGroup>
     <ClCompile Include="LoggingUI.cpp" />
     <ClCompile Include="MonitorConfig.cpp" />
-    <ClCompile Include="MonitorKeeper.cpp" />
+    <ClCompile Include="WinPosKeeper.cpp" />
     <ClCompile Include="Persistence.cpp" />
     <ClCompile Include="TrayUI.cpp" />
     <ClCompile Include="WindowTracking.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="MonitorKeeper.rc" />
+    <ResourceCompile Include="WinPosKeeper.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Icon_v2.ico" />
+    <Image Include="WinPosKeeper.ico" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="MonitorKeeper.manifest" />
+    <None Include="WinPosKeeper.manifest" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

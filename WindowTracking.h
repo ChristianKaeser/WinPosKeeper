@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MonitorKeeper.h"
+#include "WinPosKeeper.h"
 
 LPCTSTR TranslateShowCommand(int nShowCmd);
 void FormatWindowIdentity(HWND hwnd, DWORD fallbackProcessId, LPCTSTR fallbackClass, LPCTSTR fallbackProcessPath,

@@ -277,10 +277,10 @@ void LogWin32Error(LPCTSTR type, LPCTSTR context, DWORD error)
 
 HICON LoadAppIconSized(HINSTANCE instance, int width, int height)
 {
-	HICON icon = (HICON)LoadImage(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER), IMAGE_ICON,
+	HICON icon = (HICON)LoadImage(instance, MAKEINTRESOURCE(IDI_WINPOSKEEPER), IMAGE_ICON,
 		width, height, LR_DEFAULTCOLOR | LR_SHARED);
 	if (icon == NULL) {
-		icon = LoadIcon(instance, MAKEINTRESOURCE(IDI_MONITORKEEPER));
+		icon = LoadIcon(instance, MAKEINTRESOURCE(IDI_WINPOSKEEPER));
 	}
 	return icon;
 }

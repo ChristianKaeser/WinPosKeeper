@@ -30,7 +30,7 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="MonitorKeeper.h">
+    <ClInclude Include="WinPosKeeper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Persistence.h">
@@ -50,7 +50,7 @@
     <ClCompile Include="MonitorConfig.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="MonitorKeeper.cpp">
+    <ClCompile Include="WinPosKeeper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Persistence.cpp">
@@ -64,12 +64,12 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="MonitorKeeper.rc">
+    <ResourceCompile Include="WinPosKeeper.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Icon_v2.ico">
+    <Image Include="WinPosKeeper.ico">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>

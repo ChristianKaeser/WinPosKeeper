@@ -16,7 +16,7 @@ call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=x86 >nul 2>&1
 
 cd /d "%~dp0"
 echo === BUILD START === > build_log.txt 2>&1
-msbuild MonitorKeeper.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /verbosity:normal >> build_log.txt 2>&1
+msbuild WinPosKeeper.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /verbosity:normal >> build_log.txt 2>&1
 set BUILD_EXIT_CODE=%ERRORLEVEL%
 echo === EXIT CODE: %BUILD_EXIT_CODE% === >> build_log.txt 2>&1
 

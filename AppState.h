@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MonitorKeeper.h"
+#include "WinPosKeeper.h"
 #include "MonitorConfig.h"
 
 #define MAX_LOADSTRING 100

@@ -30,7 +30,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_MONITORKEEPER       ICON                    "Icon_v2.ico"
+IDI_WINPOSKEEPER       ICON                    "WinPosKeeper.ico"
 IDR_EMBEDDED_README     RCDATA                  "README.md"
 
 
@@ -39,7 +39,7 @@ IDR_EMBEDDED_README     RCDATA                  "README.md"
 // Menu
 //
 
-IDC_MONITORKEEPER MENU
+IDC_WINPOSKEEPER MENU
 BEGIN
     POPUP "&WinPosKeeper"
     BEGIN
@@ -80,7 +80,7 @@ END
 // Accelerator
 //
 
-IDC_MONITORKEEPER ACCELERATORS
+IDC_WINPOSKEEPER ACCELERATORS
 BEGIN
     "?",            IDM_ABOUT,              ASCII,  ALT
     "/",            IDM_ABOUT,              ASCII,  ALT
@@ -97,7 +97,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSM
 CAPTION "About WinPosKeeper"
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    ICON            IDI_MONITORKEEPER,IDC_STATIC,14,14,20,20
+    ICON            IDI_WINPOSKEEPER,IDC_STATIC,14,14,20,20
     LTEXT           "WinPosKeeper, Version 2.0, 2026",IDC_STATIC,42,14,172,8,SS_NOPREFIX
     LTEXT           "Based on the original MonitorKeeper by Garr Godfrey",IDC_STATIC,42,26,172,16
     DEFPUSHBUTTON   "OK",IDOK,178,41,50,14,WS_GROUP
@@ -201,7 +201,7 @@ END
 STRINGTABLE
 BEGIN
     IDS_APP_TITLE           "WinPosKeeper"
-    IDC_MONITORKEEPER       "WINPOSKEEPER"
+    IDC_WINPOSKEEPER       "WINPOSKEEPER"
 END
 
 #endif    // English (United States) resources
