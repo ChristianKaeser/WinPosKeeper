@@ -1,39 +1,31 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-*.aps
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# bulid folders
+# Build output
 Debug/
 Release/
-
+obj/
+x64/
+Win32/
 build_log.txt
+
+# Visual Studio / VS Code state
+.vs/
+.vscode/
+*.user
+*.aps
+*.ipch
+*.VC.db
+*.VC.opendb
+
+# Compiler and linker artifacts
+*.obj
+*.pch
+*.pdb
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.tlog
+*.res
+*.exe
+*.lib
+*.exp
+*.dll
