@@ -1122,13 +1122,20 @@ void ExportSelectedWindowHistory(HWND hWndOwner)
 		return;
 	}
 
+	// The Save dialog pumps messages, and timers/WinEvent callbacks can erase this history entry
+	// while it is open, so copy what the export needs instead of holding on to historyData.
+	const UINT_PTR hwndValue = historyData->hwndValue;
+	const DWORD processId = historyData->processId;
+	const std::basic_string<TCHAR> windowClass = historyData->windowClass;
+	const std::basic_string<TCHAR> processPath = historyData->processPath;
 	std::basic_string<TCHAR> baseName = historyData->latestTitle.empty() ? _T("window-history") : historyData->latestTitle;
+	historyData = NULL;
 	SanitizeFileNameComponent(baseName);
 	if (baseName.size() > 48) {
 		baseName.resize(48);
 	}
 	TCHAR defaultName[MAX_PATH];
-	StringCchPrintf(defaultName, _countof(defaultName), _T("%s-0x%08IX.tsv"), baseName.c_str(), historyData->hwndValue);
+	StringCchPrintf(defaultName, _countof(defaultName), _T("%s-0x%08IX.tsv"), baseName.c_str(), hwndValue);
 
 	TCHAR filter[] = _T("Tab-separated values (*.tsv)\0*.tsv\0All Files (*.*)\0*.*\0\0");
 	TCHAR path[MAX_PATH];
@@ -1158,10 +1165,10 @@ void ExportSelectedWindowHistory(HWND hWndOwner)
 			timeText,
 			row.isWindowEvent ? _T("window") : _T("app-log"),
 			row.source.c_str(),
-			historyData->hwndValue,
-			historyData->processId,
-			historyData->windowClass.c_str(),
-			historyData->processPath.c_str(),
+			hwndValue,
+			processId,
+			windowClass.c_str(),
+			processPath.c_str(),
 			row.isWindowEvent ? row.windowTitle.c_str() : _T(""),
 			row.hasPlacement ? row.rect.left : 0,
 			row.hasPlacement ? row.rect.top : 0,
@@ -1183,7 +1190,7 @@ void ExportSelectedWindowHistory(HWND hWndOwner)
 	WriteFile(hFile, &bom, sizeof(bom), &written, NULL);
 	WriteFile(hFile, text.c_str(), (DWORD)(text.size() * sizeof(TCHAR)), &written, NULL);
 	CloseHandle(hFile);
-	LOG_EVENTF(_T("INFO"), _T("Exported history for HWND 0x%08IX to %s"), historyData->hwndValue, path);
+	LOG_EVENTF(_T("INFO"), _T("Exported history for HWND 0x%08IX to %s"), hwndValue, path);
 }
 
 void UpdateStatusPanel()
