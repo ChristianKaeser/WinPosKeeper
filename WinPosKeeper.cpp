@@ -17,6 +17,22 @@ UINT WM_TASKBARCREATED = 0;
 
 InstanceData InstanceData::g_Instance;
 
+// Brings up the main window of the instance that is already running. Returns FALSE if that
+// instance has no main window yet (it is still starting up).
+static BOOL ActivateRunningInstance()
+{
+	HWND existing = FindWindow(szWindowClass, NULL);
+	if (existing == NULL) {
+		return FALSE;
+	}
+
+	DWORD processId = 0;
+	GetWindowThreadProcessId(existing, &processId);
+	AllowSetForegroundWindow(processId);
+	PostMessage(existing, WM_COMMAND, MAKEWPARAM(IDM_SHOWWINDOW, 0), 0);
+	return TRUE;
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	_In_opt_ HINSTANCE hPrevInstance,
 	_In_ LPWSTR lpCmdLine,
@@ -25,12 +41,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	UNREFERENCED_PARAMETER(hPrevInstance);
 	UNREFERENCED_PARAMETER(lpCmdLine);
 	ResetStartupDiagnostics();
-
-	if (InstanceData::g_Instance.AlreadyRunning) {
-		ReportStartupFailure(_T("Single-instance startup guard"), ERROR_SUCCESS,
-			_T("Another WinPosKeeper instance is already running. Use the tray icon or exit the existing instance first."));
-		return FALSE;
-	}
 
 	if (LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING) == 0) {
 		DWORD error = GetLastError();
@@ -46,6 +56,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			_T("Could not load the main window class name resource."));
 		return FALSE;
 	}
+
+	if (InstanceData::g_Instance.AlreadyRunning) {
+		if (!ActivateRunningInstance()) {
+			MessageBox(NULL, _T("WinPosKeeper is already running. Use its tray icon to open it."),
+				szTitle, MB_OK | MB_ICONINFORMATION);
+		}
+		return 0;
+	}
+
 	if (MyRegisterClass(hInstance) == 0) {
 		DWORD error = GetLastError();
 		ReportStartupFailure(_T("RegisterClassExW"), error,

@@ -361,7 +361,7 @@ InstanceData::InstanceData()
 	_LastPersistUtc.dwLowDateTime = 0;
 	_LastPersistUtc.dwHighDateTime = 0;
 
-#define APPLICATION_INSTANCE_MUTEX_NAME L"{f7ef2518-1a96-11ec-9621-0242ac130002}"
+#define APPLICATION_INSTANCE_MUTEX_NAME L"Local\\WinPosKeeper-{6d4e723a-51cb-4e84-86eb-a6bba8081615}"
 	_MutexSingleInstance = ::CreateMutex(NULL, TRUE, APPLICATION_INSTANCE_MUTEX_NAME);
 	AlreadyRunning = ::GetLastError() == ERROR_ALREADY_EXISTS;
 }
