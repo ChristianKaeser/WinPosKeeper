@@ -400,7 +400,9 @@ void InstanceData::LoadFromDisk()
 	}
 
 	DWORD entryCount = 0;
-	ReadFile(hFile, &entryCount, sizeof(entryCount), &bytesRead, NULL);
+	if (!ReadFile(hFile, &entryCount, sizeof(entryCount), &bytesRead, NULL) || bytesRead != sizeof(entryCount)) {
+		entryCount = 0;
+	}
 
 	if (entryCount > 10000) {
 		LOG_EVENTF(_T("ERROR"), _T("Persisted entry count is unreasonable: %lu"), entryCount);
@@ -424,7 +426,7 @@ void InstanceData::LoadFromDisk()
 		wndClass[39] = '\0';
 
 		DWORD placementCount = 0;
-		if (!ReadFile(hFile, &placementCount, sizeof(placementCount), &bytesRead, NULL))
+		if (!ReadFile(hFile, &placementCount, sizeof(placementCount), &bytesRead, NULL) || bytesRead != sizeof(placementCount))
 			break;
 		if (placementCount > MAX_CONFIGSLOTS) break;
 
@@ -441,13 +443,15 @@ void InstanceData::LoadFromDisk()
 			}
 		}
 
+		BOOL truncated = FALSE;
 		for (DWORD p = 0; p < placementCount; p++) {
 			UINT64 configHash;
 			WINDOWPLACEMENT wp;
-			if (!ReadFile(hFile, &configHash, sizeof(configHash), &bytesRead, NULL) || bytesRead != sizeof(configHash))
+			if (!ReadFile(hFile, &configHash, sizeof(configHash), &bytesRead, NULL) || bytesRead != sizeof(configHash) ||
+				!ReadFile(hFile, &wp, sizeof(wp), &bytesRead, NULL) || bytesRead != sizeof(wp)) {
+				truncated = TRUE;
 				break;
-			if (!ReadFile(hFile, &wp, sizeof(wp), &bytesRead, NULL) || bytesRead != sizeof(wp))
-				break;
+			}
 			if (pData != NULL && wp.length == sizeof(WINDOWPLACEMENT)) {
 				pData->m_placements[configHash] = wp;
 				GetOrCreateConfigId(configHash);
@@ -456,6 +460,9 @@ void InstanceData::LoadFromDisk()
 		}
 		if (pData != NULL) {
 			loadedEntryCount++;
+		}
+		if (truncated) {
+			break;
 		}
 	}
 
